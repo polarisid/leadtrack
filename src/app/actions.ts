@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, endOfMonth, addDays } from 'date-fns';
+import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, endOfMonth, addDays, subHours } from 'date-fns';
 
 
 const formSchema = z.object({
@@ -19,6 +19,8 @@ const formSchema = z.object({
   status: z.enum(clientStatuses),
   remarketingReminder: z.string().optional(),
 });
+
+const BRAZIL_TIMEZONE_OFFSET = 3;
 
 
 export async function getClients(userId: string): Promise<Client[]> {
@@ -536,7 +538,7 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
 
   const userIdToDataMap = new Map(allUsers.map(u => [u.id, { name: u.name, groupId: u.groupId }]));
 
-  const now = new Date();
+  const now = subHours(new Date(), BRAZIL_TIMEZONE_OFFSET);
   const startOfThisWeek = startOfWeek(now, { weekStartsOn: 1 });
   const endOfThisWeek = endOfWeek(now, { weekStartsOn: 1 });
   const startOfLastWeek = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
@@ -593,8 +595,8 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
     change: calculateChange(conversionRateThisWeek, conversionRateLastWeek)
   };
 
-  const thirtyDaysAgo = startOfDay(subDays(new Date(), 30));
-  const today = endOfDay(new Date());
+  const thirtyDaysAgo = startOfDay(subDays(now, 29));
+  const today = endOfDay(now);
   
   const performanceMap: Map<string, { leads: number; sales: number }> = new Map();
 
@@ -606,7 +608,8 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
   clients.forEach(client => {
     const createdAtDate = (client.createdAt as Timestamp).toDate();
     if (isWithinInterval(createdAtDate, { start: thirtyDaysAgo, end: today })) {
-      const dateStr = format(createdAtDate, 'yyyy-MM-dd');
+      const adjustedDate = subHours(createdAtDate, BRAZIL_TIMEZONE_OFFSET);
+      const dateStr = format(adjustedDate, 'yyyy-MM-dd');
       if (performanceMap.has(dateStr)) {
         performanceMap.get(dateStr)!.leads += 1;
       }
@@ -615,7 +618,8 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
 
   sales.forEach(sale => {
     if (isWithinInterval(sale.saleDate, { start: thirtyDaysAgo, end: today })) {
-      const dateStr = format(sale.saleDate, 'yyyy-MM-dd');
+      const adjustedDate = subHours(sale.saleDate, BRAZIL_TIMEZONE_OFFSET);
+      const dateStr = format(adjustedDate, 'yyyy-MM-dd');
       if (performanceMap.has(dateStr)) {
         performanceMap.get(dateStr)!.sales += 1;
       }
@@ -721,7 +725,7 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
     }
   });
 
-  const now = new Date();
+  const now = subHours(new Date(), BRAZIL_TIMEZONE_OFFSET);
   let startDate: Date;
   let endDate: Date;
 
