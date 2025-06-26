@@ -43,6 +43,8 @@ export interface Comment {
   text: string;
   createdAt: string;
   userId: string;
+  userName?: string;
+  isSystemMessage?: boolean;
 }
 
 export interface Group {
@@ -78,6 +80,7 @@ export interface DashboardAnalyticsData {
     rate: number;
     change: number;
   };
+  abandonedLeadsCount: number;
   performanceOverTime: {
       date: string;
       leads: number;

@@ -23,6 +23,7 @@ import {
   Briefcase,
   Loader2,
   MessageSquare,
+  Info,
 } from "lucide-react";
 import { StatusBadge } from "./status-badge";
 import { format } from "date-fns";
@@ -34,6 +35,7 @@ import { getComments, addComment } from "@/app/actions";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "./ui/separator";
+import { cn } from "@/lib/utils";
 
 interface ClientDetailSheetProps {
   isOpen: boolean;
@@ -200,18 +202,34 @@ export default function ClientDetailSheet({
                   comments.map((comment) => (
                     <div
                       key={comment.id}
-                      className="text-sm p-3 bg-muted/50 rounded-md"
+                      className={cn(
+                        "text-sm p-3 rounded-md flex gap-3",
+                        comment.isSystemMessage
+                          ? "bg-sky-50 dark:bg-sky-900/30"
+                          : "bg-muted/50"
+                      )}
                     >
-                      <p className="text-foreground break-words whitespace-pre-wrap">
-                        {comment.text}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        {format(
-                          new Date(comment.createdAt),
-                          "dd/MM/yyyy 'às' HH:mm",
-                          { locale: ptBR }
-                        )}
-                      </p>
+                      {comment.isSystemMessage && (
+                          <Info className="h-4 w-4 mt-0.5 text-sky-600 dark:text-sky-400 flex-shrink-0" />
+                      )}
+                       <div className="flex-1">
+                         <p className={cn(
+                             "text-foreground break-words whitespace-pre-wrap",
+                             comment.isSystemMessage && "italic text-sky-800 dark:text-sky-200"
+                          )}>
+                          {!comment.isSystemMessage && (
+                            <strong className="font-semibold">{comment.userName || 'Usuário'}: </strong>
+                          )}
+                          {comment.text}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {format(
+                            new Date(comment.createdAt),
+                            "dd/MM/yyyy 'às' HH:mm",
+                            { locale: ptBR }
+                          )}
+                        </p>
+                      </div>
                     </div>
                   ))
                 ) : (

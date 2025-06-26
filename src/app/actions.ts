@@ -64,17 +64,45 @@ export async function addClient(data: unknown, userId: string) {
   const querySnapshot = await getDocs(q);
 
   const now = Timestamp.now();
+  const userDoc = await getDoc(doc(db, 'users', userId));
+  const newOwnerName = userDoc.exists() ? userDoc.data().name : 'Vendedor';
 
   try {
     if (!querySnapshot.empty) {
-      // Contact exists, transfer ownership
       const existingClientDoc = querySnapshot.docs[0];
       const existingClientRef = doc(db, 'clients', existingClientDoc.id);
-      
-      await updateDoc(existingClientRef, {
+      const existingClientData = existingClientDoc.data();
+      const ownerId = existingClientData.userId;
+
+      if (ownerId === userId) {
+        return { error: { formErrors: [], fieldErrors: { contact: ["Este contato já está na sua carteira de clientes."] } } };
+      }
+
+      const sevenDaysAgo = subDays(new Date(), 7);
+      const updatedAtDate = (existingClientData.updatedAt as Timestamp).toDate();
+
+      if (updatedAtDate >= sevenDaysAgo) {
+        const ownerUserDoc = await getDoc(doc(db, 'users', ownerId));
+        const ownerName = ownerUserDoc.exists() ? ownerUserDoc.data().name : 'outro vendedor';
+        return { error: { formErrors: [], fieldErrors: { contact: [`Este lead pertence a ${ownerName} e foi atualizado recentemente.`] } } };
+      }
+
+      const batch = writeBatch(db);
+      batch.update(existingClientRef, {
         userId: userId,
         updatedAt: now,
       });
+
+      const commentText = `Lead transferido para ${newOwnerName}.`;
+      const commentsRef = collection(db, 'clients', existingClientDoc.id, 'comments');
+      batch.set(doc(commentsRef), {
+        text: commentText,
+        userId: 'system',
+        createdAt: now,
+        isSystemMessage: true,
+      });
+
+      await batch.commit();
 
       const updatedDocSnapshot = await getDoc(existingClientRef);
       const clientData = updatedDocSnapshot.data();
@@ -91,8 +119,10 @@ export async function addClient(data: unknown, userId: string) {
         } as Client
       };
     } else {
-      // Contact does not exist, create new client
-      const docRef = await addDoc(collection(db, 'clients'), {
+      const batch = writeBatch(db);
+      const newClientRef = doc(clientsRef);
+
+      const newClientData = {
         ...result.data,
         userId,
         normalizedContact,
@@ -100,19 +130,28 @@ export async function addClient(data: unknown, userId: string) {
         remarketingReminder: result.data.remarketingReminder || '',
         createdAt: now,
         updatedAt: now,
+      };
+
+      batch.set(newClientRef, newClientData);
+
+      const commentText = `Lead criado por ${newOwnerName}.`;
+      const commentsRef = collection(db, 'clients', newClientRef.id, 'comments');
+      batch.set(doc(commentsRef), {
+        text: commentText,
+        userId: 'system',
+        createdAt: now,
+        isSystemMessage: true,
       });
+
+      await batch.commit();
 
       revalidatePath('/');
       return { 
           success: true,
           transferred: false, 
           client: {
-              id: docRef.id,
-              ...result.data,
-              userId,
-              normalizedContact,
-              lastProductBought: result.data.lastProductBought || '',
-              remarketingReminder: result.data.remarketingReminder || '',
+              id: newClientRef.id,
+              ...newClientData,
               createdAt: now.toDate().toISOString(),
               updatedAt: now.toDate().toISOString(),
           } as Client
@@ -290,7 +329,8 @@ export async function updateClientStatus(id: string, status: ClientStatus, userI
             const commentDocRef = doc(commentsRef);
             batch.set(commentDocRef, {
                 text: commentText,
-                userId: userId,
+                userId: "system",
+                isSystemMessage: true,
                 createdAt: now,
             });
         }
@@ -336,12 +376,30 @@ export async function getComments(clientId: string, userId: string): Promise<Com
   const q = query(commentsRef, orderBy('createdAt', 'desc'));
   const querySnapshot = await getDocs(q);
 
-  const comments = querySnapshot.docs.map(doc => {
+  const commentDocs = querySnapshot.docs;
+  const userIds = [...new Set(commentDocs.map(doc => doc.data().userId).filter(id => id !== 'system'))];
+
+  const userMap = new Map<string, string>();
+  if (userIds.length > 0) {
+    const usersRef = collection(db, 'users');
+    const usersQuery = query(usersRef, where('__name__', 'in', userIds));
+    const usersSnapshot = await getDocs(usersQuery);
+    usersSnapshot.forEach(doc => userMap.set(doc.id, doc.data().name));
+  }
+
+  const comments = commentDocs.map(doc => {
     const data = doc.data();
+    const commenterId = data.userId;
+    const userName = commenterId === 'system' 
+        ? 'Sistema' 
+        : userMap.get(commenterId) || 'Usuário Deletado';
+
     return {
       id: doc.id,
       text: data.text,
-      userId: data.userId,
+      userId: commenterId,
+      userName,
+      isSystemMessage: data.isSystemMessage || false,
       createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
     } as Comment;
   });
@@ -361,19 +419,32 @@ export async function addComment(clientId: string, text: string, userId: string)
   }
 
   try {
+    const batch = writeBatch(db);
+    const clientDocRef = doc(db, 'clients', clientId);
     const commentsRef = collection(db, 'clients', clientId, 'comments');
+    const newCommentRef = doc(commentsRef);
+    const now = Timestamp.now();
+
     const newCommentData = {
       text,
       userId,
-      createdAt: Timestamp.now(),
+      createdAt: now,
+      isSystemMessage: false,
     };
-    const docRef = await addDoc(commentsRef, newCommentData);
-    
+    batch.set(newCommentRef, newCommentData);
+    batch.update(clientDocRef, { updatedAt: now });
+
+    await batch.commit();
+
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userName = userDoc.exists() ? userDoc.data().name : 'Usuário';
+
     return { 
         success: true, 
         comment: {
-            id: docRef.id,
+            id: newCommentRef.id,
             ...newCommentData,
+            userName,
             createdAt: newCommentData.createdAt.toDate().toISOString(),
         } as Comment
     };
@@ -518,11 +589,15 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
 
   const clients = allClientsSnapshot.docs
     .filter(doc => userIdsInGroup ? userIdsInGroup.includes(doc.data().userId) : true)
-    .map(docInst => ({
-      id: docInst.id,
-      ...docInst.data() as Omit<Client, 'id' | 'createdAt' | 'updatedAt'>,
-      createdAt: docInst.data().createdAt,
-  }));
+    .map(docInst => {
+      const data = docInst.data();
+      return {
+        id: docInst.id,
+        ...data,
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+      }
+  });
 
   const sales = allSalesSnapshot.docs
     .filter(doc => userIdsInGroup ? userIdsInGroup.includes(doc.data().userId) : true)
@@ -537,6 +612,22 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
     });
 
   const userIdToDataMap = new Map(allUsers.map(u => [u.id, { name: u.name, groupId: u.groupId }]));
+  
+  const sevenDaysAgo = subDays(new Date(), 7);
+  
+  const abandonedLeadsCount = clients.filter(client => {
+    const status = client.status as ClientStatus;
+    const isPotentiallyAbandonable = status === 'Novo Lead' || status === 'Em negociação';
+    if (!isPotentiallyAbandonable) {
+        return false;
+    }
+    if (!client.updatedAt) {
+      return false;
+    }
+    const updatedAtDate = (client.updatedAt as Timestamp).toDate();
+    return updatedAtDate < sevenDaysAgo;
+  }).length;
+
 
   const now = subHours(new Date(), BRAZIL_TIMEZONE_OFFSET);
   const startOfThisWeek = startOfWeek(now, { weekStartsOn: 1 });
@@ -669,6 +760,7 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
     weeklySales,
     weeklyRevenue,
     weeklyConversionRate,
+    abandonedLeadsCount,
     performanceOverTime,
     salesRanking,
   };
@@ -999,7 +1091,7 @@ export async function cancelSale(saleId: string, userId: string) {
   }
 }
 
-export async function checkContactExists(contact: string, currentClientId?: string) {
+export async function checkContactExists(contact: string, currentUserId: string, currentClientId?: string) {
   if (!db) {
     return { status: 'error', message: 'Erro de conexão.' };
   }
@@ -1020,25 +1112,33 @@ export async function checkContactExists(contact: string, currentClientId?: stri
     }
 
     const existingClientDoc = querySnapshot.docs[0];
+    const existingClientData = existingClientDoc.data();
+    const ownerId = existingClientData.userId;
     
     if (currentClientId && existingClientDoc.id === currentClientId) {
       return { status: 'idle', message: null };
     }
     
-    if (!currentClientId) {
-        const ownerId = existingClientDoc.data().userId;
-        const ownerUserDocRef = doc(db, 'users', ownerId);
-        const ownerUserDoc = await getDoc(ownerUserDocRef);
-        const ownerName = ownerUserDoc.exists() ? ownerUserDoc.data().name : 'um vendedor';
-        return { 
+    if (ownerId === currentUserId) {
+        return { status: 'info', message: 'ℹ️ Este contato já está na sua carteira.' };
+    }
+
+    const sevenDaysAgo = subDays(new Date(), 7);
+    const updatedAtDate = (existingClientData.updatedAt as Timestamp).toDate();
+    const ownerUserDocRef = doc(db, 'users', ownerId);
+    const ownerUserDoc = await getDoc(ownerUserDocRef);
+    const ownerName = ownerUserDoc.exists() ? ownerUserDoc.data().name : 'um vendedor';
+    
+    if (updatedAtDate < sevenDaysAgo) {
+         return { 
             status: 'warning', 
-            message: `⚠️ Contato de ${ownerName}. Ao salvar, o lead será transferido para você.`
+            message: `⚠️ Contato de ${ownerName}. Lead inativo, será transferido para você ao salvar.`
         };
     }
     
     return { 
         status: 'error', 
-        message: '❌ Este contato já está em uso por outro cliente.' 
+        message: `❌ Contato de ${ownerName}. Lead ativo e bloqueado.` 
     };
 
   } catch (e) {

@@ -13,7 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard } from 'lucide-react';
+import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup } from '@/app/actions';
 import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group } from '@/lib/types';
@@ -644,7 +644,7 @@ export default function AdminDashboardPage() {
                     </Select>
                 </div>
                 <section className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
                     <Card>
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">Receita da Semana</CardTitle>
@@ -701,6 +701,22 @@ export default function AdminDashboardPage() {
                                   {analyticsData?.weeklyConversionRate.rate.toFixed(1)}%
                                 </div>
                                 <ComparisonText value={analyticsData?.weeklyConversionRate.change} />
+                            </>
+                        )}
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Leads Abandonados</CardTitle>
+                        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        {isAnalyticsLoading ? <Skeleton className="h-8 w-1/4" /> : (
+                            <>
+                                <div className="text-2xl font-bold">{analyticsData?.abandonedLeadsCount}</div>
+                                <p className="text-xs text-muted-foreground">
+                                  Sem interação há mais de 7 dias.
+                                </p>
                             </>
                         )}
                       </CardContent>

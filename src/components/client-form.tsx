@@ -87,16 +87,17 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
       return;
     }
     
+    if (!user) return;
     const normalizedContact = contactValue?.replace(/\D/g, '') || '';
 
-    if (!normalizedContact || normalizedContact.length < 10 || (client && normalizedContact === client.contact?.replace(/\D/g, ''))) {
+    if (!normalizedContact || normalizedContact.length < 10) {
       setContactCheck({ status: 'idle', message: null });
       return;
     }
 
     const handler = setTimeout(async () => {
       setIsCheckingContact(true);
-      const result = await checkContactExists(contactValue, client?.id);
+      const result = await checkContactExists(contactValue, user.uid, client?.id);
       setContactCheck(result);
       setIsCheckingContact(false);
     }, 500);
@@ -104,7 +105,7 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
     return () => {
       clearTimeout(handler);
     };
-  }, [contactValue, client, isOpen]);
+  }, [contactValue, client, isOpen, user]);
 
   useEffect(() => {
     if (client) {
@@ -149,9 +150,16 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
 
         } else {
           const result = await addClient(values, user.uid);
-           if (result.error || !result.client) {
-            throw new Error(result.error?.formErrors.join(", ") || "Falha ao adicionar cliente");
+           if (result.error) {
+            if (result.error.fieldErrors.contact) {
+              form.setError("contact", { type: "manual", message: result.error.fieldErrors.contact[0] });
+            }
+            if (result.error.formErrors && result.error.formErrors.length > 0) {
+              toast({ variant: "destructive", title: "Erro ao Adicionar", description: result.error.formErrors.join(", ") });
+            }
+            return;
           }
+          if (!result.client) throw new Error("Falha ao adicionar cliente");
 
           if (result.transferred) {
             toast({ title: "Lead Transferido!", description: "Este cliente já existia e foi transferido para sua carteira." });
@@ -176,6 +184,7 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
       case 'available': return 'text-green-600';
       case 'warning': return 'text-amber-600';
       case 'error': return 'text-destructive';
+      case 'info': return 'text-sky-600';
       default: return 'text-muted-foreground';
     }
   };
