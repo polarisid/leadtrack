@@ -10,6 +10,7 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
@@ -75,6 +76,7 @@ import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tool
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
+import { SellerLeadsDialog } from '@/components/admin/seller-leads-dialog';
 
 
 const chartConfig = {
@@ -160,6 +162,8 @@ export default function AdminDashboardPage() {
   const [groupToDelete, setGroupToDelete] = useState<Group | null>(null);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [isEditGroupOpen, setIsEditGroupOpen] = useState(false);
+  const [viewingSellerLeads, setViewingSellerLeads] = useState<{ id: string; name: string } | null>(null);
+
 
   const fetchUsers = () => {
     if (!user) return;
@@ -523,6 +527,16 @@ export default function AdminDashboardPage() {
                      <Progress value={seller.conversionRate} className="h-2" />
                   </div>
                 </CardContent>
+                 <CardFooter>
+                  <Button 
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setViewingSellerLeads({ id: seller.sellerId, name: seller.sellerName })}
+                  >
+                      <Users className="mr-2 h-4 w-4" />
+                      Ver Leads ({seller.totalLeads})
+                  </Button>
+                </CardFooter>
               </Card>
             </AccordionContent>
           </AccordionItem>
@@ -715,7 +729,7 @@ export default function AdminDashboardPage() {
                             <>
                                 <div className="text-2xl font-bold">{analyticsData?.abandonedLeadsCount}</div>
                                 <p className="text-xs text-muted-foreground">
-                                  Sem interação há mais de 7 dias.
+                                  Sem interação há mais de 30 dias.
                                 </p>
                             </>
                         )}
@@ -888,6 +902,12 @@ export default function AdminDashboardPage() {
         onOpenChange={setIsEditGroupOpen}
         group={editingGroup}
         onGroupUpdated={onDataUpdated}
+      />
+
+      <SellerLeadsDialog
+        isOpen={!!viewingSellerLeads}
+        onOpenChange={() => setViewingSellerLeads(null)}
+        seller={viewingSellerLeads}
       />
 
       <AlertDialog open={!!userToDelete} onOpenChange={(open) => !open && setUserToDelete(null)}>

@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, endOfMonth, addDays, subHours } from 'date-fns';
+import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours } from 'date-fns';
 
 
 const formSchema = z.object({
@@ -78,10 +78,10 @@ export async function addClient(data: unknown, userId: string) {
         return { error: { formErrors: [], fieldErrors: { contact: ["Este contato já está na sua carteira de clientes."] } } };
       }
 
-      const sevenDaysAgo = subDays(new Date(), 7);
+      const thirtyDaysAgo = subDays(new Date(), 30);
       const updatedAtDate = (existingClientData.updatedAt as Timestamp).toDate();
 
-      if (updatedAtDate >= sevenDaysAgo) {
+      if (updatedAtDate >= thirtyDaysAgo) {
         const ownerUserDoc = await getDoc(doc(db, 'users', ownerId));
         const ownerName = ownerUserDoc.exists() ? ownerUserDoc.data().name : 'outro vendedor';
         return { error: { formErrors: [], fieldErrors: { contact: [`Este lead pertence a ${ownerName} e foi atualizado recentemente.`] } } };
@@ -613,7 +613,7 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
 
   const userIdToDataMap = new Map(allUsers.map(u => [u.id, { name: u.name, groupId: u.groupId }]));
   
-  const sevenDaysAgo = subDays(new Date(), 7);
+  const thirtyDaysAgoForAbandoned = subDays(new Date(), 30);
   
   const abandonedLeadsCount = clients.filter(client => {
     const status = client.status as ClientStatus;
@@ -625,7 +625,7 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
       return false;
     }
     const updatedAtDate = (client.updatedAt as Timestamp).toDate();
-    return updatedAtDate < sevenDaysAgo;
+    return updatedAtDate < thirtyDaysAgoForAbandoned;
   }).length;
 
 
@@ -1123,13 +1123,13 @@ export async function checkContactExists(contact: string, currentUserId: string,
         return { status: 'info', message: 'ℹ️ Este contato já está na sua carteira.' };
     }
 
-    const sevenDaysAgo = subDays(new Date(), 7);
+    const thirtyDaysAgo = subDays(new Date(), 30);
     const updatedAtDate = (existingClientData.updatedAt as Timestamp).toDate();
     const ownerUserDocRef = doc(db, 'users', ownerId);
     const ownerUserDoc = await getDoc(ownerUserDocRef);
     const ownerName = ownerUserDoc.exists() ? ownerUserDoc.data().name : 'um vendedor';
     
-    if (updatedAtDate < sevenDaysAgo) {
+    if (updatedAtDate < thirtyDaysAgo) {
          return { 
             status: 'warning', 
             message: `⚠️ Contato de ${ownerName}. Lead inativo, será transferido para você ao salvar.`
