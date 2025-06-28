@@ -14,10 +14,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle } from 'lucide-react';
+import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup } from '@/app/actions';
-import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group } from '@/lib/types';
+import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, createMessageTemplate, deleteMessageTemplate } from '@/app/actions';
+import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -71,6 +71,7 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { UserEditDialog } from '@/components/admin/user-edit-dialog';
 import { UserGroupDialog } from '@/components/admin/user-group-dialog';
 import { GroupEditDialog } from '@/components/admin/group-edit-dialog';
+import { TemplateEditDialog } from '@/components/admin/template-edit-dialog';
 import { cn } from '@/lib/utils';
 import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
@@ -90,7 +91,7 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
-const ComparisonText = ({ value }: { value: number | undefined }) => {
+const ComparisonText = ({ value, period }: { value: number | undefined; period: 'weekly' | 'monthly' }) => {
   if (value === undefined || !isFinite(value)) {
     return (
       <p className="text-xs text-muted-foreground flex items-center">
@@ -101,6 +102,7 @@ const ComparisonText = ({ value }: { value: number | undefined }) => {
   
   const isPositive = value > 0;
   const isNegative = value < 0;
+  const periodText = period === 'weekly' ? 'na última semana' : 'no último mês';
 
   if (value === 0) {
     return (
@@ -119,7 +121,7 @@ const ComparisonText = ({ value }: { value: number | undefined }) => {
     )}>
       {isPositive && <TrendingUp className="mr-1 h-4 w-4" />}
       {isNegative && <TrendingDown className="mr-1 h-4 w-4" />}
-      {isPositive ? '+' : ''}{value.toFixed(1)}% na última semana
+      {isPositive ? '+' : ''}{value.toFixed(1)}% {periodText}
     </p>
   );
 };
@@ -139,6 +141,10 @@ export default function AdminDashboardPage() {
   const [isLoadingGroups, setIsLoadingGroups] = useState(true);
   const [groupsError, setGroupsError] = useState<string | null>(null);
 
+  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+
   const [analyticsData, setAnalyticsData] = useState<DashboardAnalyticsData | null>(null);
   const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(true);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
@@ -149,7 +155,9 @@ export default function AdminDashboardPage() {
   const [analyticsPeriod, setAnalyticsPeriod] = useState<AnalyticsPeriod>('total');
   const [groupFilter, setGroupFilter] = useState<string>('all');
   const [userGroupFilter, setUserGroupFilter] = useState<string>('all');
+  
   const [overviewGroupFilter, setOverviewGroupFilter] = useState<string>('all');
+  const [overviewPeriod, setOverviewPeriod] = useState<'weekly' | 'monthly'>('weekly');
 
 
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -163,6 +171,21 @@ export default function AdminDashboardPage() {
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [isEditGroupOpen, setIsEditGroupOpen] = useState(false);
   const [viewingSellerLeads, setViewingSellerLeads] = useState<{ id: string; name: string } | null>(null);
+  
+  const [editingTemplate, setEditingTemplate] = useState<MessageTemplate | null>(null);
+  const [isEditTemplateOpen, setIsEditTemplateOpen] = useState(false);
+  const [templateToDelete, setTemplateToDelete] = useState<MessageTemplate | null>(null);
+
+  const periodMap = { weekly: 'Semana', monthly: 'Mês' };
+  
+  const periodChartTitleMap: Record<AnalyticsPeriod, string> = {
+    daily: "Esta Semana",
+    weekly: "Esta Semana",
+    monthly: "Este Mês",
+    yearly: "Este Ano",
+    total: "Últimos 30 dias",
+  };
+  const chartTitle = `Desempenho (${periodChartTitleMap[analyticsPeriod]})`;
 
 
   const fetchUsers = () => {
@@ -182,7 +205,7 @@ export default function AdminDashboardPage() {
      if (!user) return;
      setIsAnalyticsLoading(true);
      setAnalyticsError(null);
-     getDashboardAnalytics(user.uid, overviewGroupFilter === 'all' ? null : overviewGroupFilter)
+     getDashboardAnalytics(user.uid, overviewPeriod, overviewGroupFilter === 'all' ? null : overviewGroupFilter)
        .then(setAnalyticsData)
        .catch((err) => {
          setAnalyticsError(err.message || 'Ocorreu um erro ao buscar os dados do painel.');
@@ -216,10 +239,24 @@ export default function AdminDashboardPage() {
       })
       .finally(() => setIsLoadingGroups(false));
   };
+  
+  const fetchTemplates = () => {
+    if (!user) return;
+    setIsLoadingTemplates(true);
+    setTemplatesError(null);
+    getMessageTemplates(user.uid)
+      .then(setTemplates)
+      .catch((err) => {
+        setTemplatesError(err.message || 'Ocorreu um erro ao buscar os templates.');
+        toast({ variant: 'destructive', title: 'Erro de Templates', description: 'Não foi possível carregar os templates de mensagem.' });
+      })
+      .finally(() => setIsLoadingTemplates(false));
+  };
 
   useEffect(() => {
     if (user?.uid) {
         fetchGroups();
+        fetchTemplates();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -229,7 +266,7 @@ export default function AdminDashboardPage() {
         fetchDashboardAnalytics();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, overviewGroupFilter]);
+  }, [user, overviewGroupFilter, overviewPeriod]);
 
 
   useEffect(() => {
@@ -267,11 +304,17 @@ export default function AdminDashboardPage() {
     setIsEditGroupOpen(true);
   };
   
+  const handleOpenTemplateEdit = (template: MessageTemplate | null) => {
+    setEditingTemplate(template);
+    setIsEditTemplateOpen(true);
+  }
+
   const onDataUpdated = () => {
     fetchGroups();
     fetchUsers();
     fetchDashboardAnalytics();
     fetchSellerAnalytics();
+    fetchTemplates();
   };
   
   const handleSendPasswordReset = (email: string) => {
@@ -342,6 +385,20 @@ export default function AdminDashboardPage() {
         toast({ variant: 'destructive', title: 'Erro', description: result.error });
       }
       setGroupToDelete(null);
+    });
+  };
+
+  const handleDeleteTemplate = () => {
+    if (!templateToDelete || !user) return;
+    startTransition(async () => {
+        const result = await deleteMessageTemplate(templateToDelete.id, user.uid);
+        if (result.success) {
+            toast({ title: 'Sucesso!', description: 'Template deletado.' });
+            setTemplates(prev => prev.filter(t => t.id !== templateToDelete.id));
+        } else {
+            toast({ variant: 'destructive', title: 'Erro', description: result.error });
+        }
+        setTemplateToDelete(null);
     });
   };
 
@@ -497,35 +554,58 @@ export default function AdminDashboardPage() {
             </AccordionTrigger>
             <AccordionContent className="p-1">
               <Card>
-                <CardContent className="p-4 grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="space-y-4">
-                      <h4 className="font-medium">Resumo de Leads</h4>
-                      <div className="space-y-2">
-                        {(Object.keys(seller.leadsByStatus) as ClientStatus[]).map((status) => (
-                          <div key={status} className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">{status}</span>
-                            <span className="font-medium">{seller.leadsByStatus[status]}</span>
+                <CardContent className="p-4 space-y-6">
+                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="space-y-4">
+                          <h4 className="font-medium">Resumo de Leads</h4>
+                          <div className="space-y-2">
+                            {(Object.keys(seller.leadsByStatus) as ClientStatus[]).map((status) => (
+                              <div key={status} className="flex items-center justify-between text-sm">
+                                <span className="text-muted-foreground">{status}</span>
+                                <span className="font-medium">{seller.leadsByStatus[status]}</span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                      </div>
+                       <div className="space-y-4">
+                         <h4 className="font-medium">Receita Total ({analyticsPeriod === 'total' ? 'Total' : 'no período'})</h4>
+                         <p className="text-3xl font-bold">{seller.totalRevenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
+                         <p className="text-xs text-muted-foreground">
+                            {seller.totalSales} vendas de {seller.totalLeads} leads totais.
+                         </p>
+                      </div>
+                      <div className="space-y-4">
+                         <h4 className="font-medium">Taxa de Conversão</h4>
+                         <div className="flex items-end gap-2">
+                            <p className="text-3xl font-bold">{seller.conversionRate.toFixed(1)}%</p>
+                         </div>
+                         <p className="text-xs text-muted-foreground">
+                            Baseado nos leads e vendas do período.
+                         </p>
+                         <Progress value={seller.conversionRate} className="h-2" />
                       </div>
                   </div>
-                   <div className="space-y-4">
-                     <h4 className="font-medium">Receita Total ({analyticsPeriod === 'total' ? 'Total' : 'no período'})</h4>
-                     <p className="text-3xl font-bold">{seller.totalRevenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
-                     <p className="text-xs text-muted-foreground">
-                        {seller.totalSales} vendas de {seller.totalLeads} leads totais.
-                     </p>
-                  </div>
-                  <div className="space-y-4">
-                     <h4 className="font-medium">Taxa de Conversão</h4>
-                     <div className="flex items-end gap-2">
-                        <p className="text-3xl font-bold">{seller.conversionRate.toFixed(1)}%</p>
-                     </div>
-                     <p className="text-xs text-muted-foreground">
-                        Baseado nos leads e vendas do período.
-                     </p>
-                     <Progress value={seller.conversionRate} className="h-2" />
-                  </div>
+                  <div className="space-y-2 pt-4 border-t">
+                      <h4 className="font-medium">{chartTitle}</h4>
+                        {seller.performanceOverTime && seller.performanceOverTime.length > 0 ? (
+                          <ChartContainer config={chartConfig} className="h-[200px] w-full">
+                            <ResponsiveContainer>
+                              <LineChart data={seller.performanceOverTime} margin={{ top: 5, right: 20, left: -10, bottom: 0 }}>
+                                <CartesianGrid vertical={false} />
+                                <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} fontSize={12} />
+                                <YAxis tickLine={false} axisLine={false} width={30} allowDecimals={false} />
+                                <Tooltip cursor={false} content={<ChartTooltipContent indicator="dot" />} />
+                                <Line dataKey="leads" type="monotone" stroke="var(--color-leads)" strokeWidth={2} dot={false} />
+                                <Line dataKey="sales" type="monotone" stroke="var(--color-sales)" strokeWidth={2} dot={false} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </ChartContainer>
+                        ) : (
+                          <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
+                              Nenhum dado de desempenho para exibir.
+                          </div>
+                        )}
+                   </div>
                 </CardContent>
                  <CardFooter>
                   <Button 
@@ -611,6 +691,69 @@ export default function AdminDashboardPage() {
     )
   }
 
+  const renderTemplateManagementContent = () => {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+            <div>
+              <CardTitle>Templates de Mensagem</CardTitle>
+              <CardDescription>Crie e gerencie templates para o WhatsApp.</CardDescription>
+            </div>
+            <Button onClick={() => handleOpenTemplateEdit(null)}>
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Criar Template
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoadingTemplates ? (
+            <div className="space-y-2">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : templatesError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Erro</AlertTitle>
+              <AlertDescription>{templatesError}</AlertDescription>
+            </Alert>
+          ) : templates.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Nenhum template criado.</p>
+          ) : (
+            <div className="border rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Título</TableHead>
+                    <TableHead>Conteúdo</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {templates.map(template => (
+                    <TableRow key={template.id}>
+                      <TableCell className="font-medium">{template.title}</TableCell>
+                      <TableCell className="text-muted-foreground max-w-sm truncate">{template.content}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenTemplateEdit(template)} disabled={isPending}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setTemplateToDelete(template)} disabled={isPending}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
 
   return (
     <>
@@ -639,10 +782,20 @@ export default function AdminDashboardPage() {
                 <TabsTrigger value="overview">Visão Geral e Usuários</TabsTrigger>
                 <TabsTrigger value="seller-data">Dados por Vendedor</TabsTrigger>
                 <TabsTrigger value="groups">Gerenciamento de Grupos</TabsTrigger>
+                 <TabsTrigger value="templates">Templates de Mensagem</TabsTrigger>
               </TabsList>
               
               <TabsContent value="overview" className="space-y-8">
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-2">
+                    <Select value={overviewPeriod} onValueChange={(value) => setOverviewPeriod(value as 'weekly' | 'monthly')}>
+                        <SelectTrigger className="w-full sm:w-[180px]">
+                            <SelectValue placeholder="Período" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="weekly">Visão Semanal</SelectItem>
+                            <SelectItem value="monthly">Visão Mensal</SelectItem>
+                        </SelectContent>
+                    </Select>
                     <Select value={overviewGroupFilter} onValueChange={setOverviewGroupFilter}>
                         <SelectTrigger className="w-full sm:w-[220px]">
                             <SelectValue placeholder="Filtrar por grupo" />
@@ -661,60 +814,60 @@ export default function AdminDashboardPage() {
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
                     <Card>
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Receita da Semana</CardTitle>
+                        <CardTitle className="text-sm font-medium">Receita da {periodMap[overviewPeriod]}</CardTitle>
                         <CreditCard className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
                         {isAnalyticsLoading ? <Skeleton className="h-8 w-3/4" /> : (
                             <>
                                 <div className="text-2xl font-bold">
-                                    {analyticsData?.weeklyRevenue.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                    {analyticsData?.revenue.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                 </div>
-                                <ComparisonText value={analyticsData?.weeklyRevenue.change} />
+                                <ComparisonText value={analyticsData?.revenue.change} period={overviewPeriod} />
                             </>
                         )}
                       </CardContent>
                     </Card>
                      <Card>
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Vendas da Semana</CardTitle>
+                        <CardTitle className="text-sm font-medium">Vendas da {periodMap[overviewPeriod]}</CardTitle>
                         <DollarSign className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
                         {isAnalyticsLoading ? <Skeleton className="h-8 w-1/4" /> : (
                             <>
-                                <div className="text-2xl font-bold">{analyticsData?.weeklySales.count}</div>
-                                <ComparisonText value={analyticsData?.weeklySales.change} />
+                                <div className="text-2xl font-bold">{analyticsData?.sales.count}</div>
+                                <ComparisonText value={analyticsData?.sales.change} period={overviewPeriod} />
                             </>
                         )}
                       </CardContent>
                     </Card>
                     <Card>
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Leads da Semana</CardTitle>
+                        <CardTitle className="text-sm font-medium">Leads da {periodMap[overviewPeriod]}</CardTitle>
                         <Target className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
                          {isAnalyticsLoading ? <Skeleton className="h-8 w-1/4" /> : (
                             <>
-                                <div className="text-2xl font-bold">{analyticsData?.weeklyLeads.count}</div>
-                                <ComparisonText value={analyticsData?.weeklyLeads.change} />
+                                <div className="text-2xl font-bold">{analyticsData?.leads.count}</div>
+                                <ComparisonText value={analyticsData?.leads.change} period={overviewPeriod} />
                             </>
                         )}
                       </CardContent>
                     </Card>
                     <Card>
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Taxa de Conversão (Semana)</CardTitle>
+                        <CardTitle className="text-sm font-medium">Conversão ({periodMap[overviewPeriod]})</CardTitle>
                         <Percent className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
                          {isAnalyticsLoading ? <Skeleton className="h-8 w-1/4" /> : (
                             <>
                                 <div className="text-2xl font-bold">
-                                  {analyticsData?.weeklyConversionRate.rate.toFixed(1)}%
+                                  {analyticsData?.conversionRate.rate.toFixed(1)}%
                                 </div>
-                                <ComparisonText value={analyticsData?.weeklyConversionRate.change} />
+                                <ComparisonText value={analyticsData?.conversionRate.change} period={overviewPeriod} />
                             </>
                         )}
                       </CardContent>
@@ -860,6 +1013,7 @@ export default function AdminDashboardPage() {
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="total">Total</SelectItem>
+                                <SelectItem value="yearly">Este Ano</SelectItem>
                                 <SelectItem value="monthly">Este Mês</SelectItem>
                                 <SelectItem value="weekly">Esta Semana</SelectItem>
                                 <SelectItem value="daily">Hoje</SelectItem>
@@ -876,6 +1030,10 @@ export default function AdminDashboardPage() {
 
               <TabsContent value="groups">
                 {renderGroupManagementContent()}
+              </TabsContent>
+
+              <TabsContent value="templates">
+                {renderTemplateManagementContent()}
               </TabsContent>
 
             </Tabs>
@@ -902,6 +1060,13 @@ export default function AdminDashboardPage() {
         onOpenChange={setIsEditGroupOpen}
         group={editingGroup}
         onGroupUpdated={onDataUpdated}
+      />
+      
+      <TemplateEditDialog
+        isOpen={isEditTemplateOpen}
+        onOpenChange={setIsEditTemplateOpen}
+        template={editingTemplate}
+        onTemplateUpdated={onDataUpdated}
       />
 
       <SellerLeadsDialog
@@ -942,6 +1107,26 @@ export default function AdminDashboardPage() {
             <AlertDialogCancel onClick={() => setGroupToDelete(null)}>Cancelar</AlertDialogCancel>
             <AlertDialogAction 
                 onClick={handleDeleteGroup} 
+                className="bg-destructive hover:bg-destructive/90"
+                disabled={isPending}>
+                {isPending ? "Deletando..." : "Sim, deletar"}
+            </AlertDialogAction>
+            </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+       <AlertDialog open={!!templateToDelete} onOpenChange={(open) => !open && setTemplateToDelete(null)}>
+        <AlertDialogContent>
+            <AlertDialogHeader>
+            <AlertDialogTitle>Deletar o template "{templateToDelete?.title}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+                Esta ação não pode ser desfeita e o template será removido permanentemente.
+            </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setTemplateToDelete(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction 
+                onClick={handleDeleteTemplate} 
                 className="bg-destructive hover:bg-destructive/90"
                 disabled={isPending}>
                 {isPending ? "Deletando..." : "Sim, deletar"}

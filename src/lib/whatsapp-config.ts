@@ -3,9 +3,10 @@ import type { Client } from './types';
 /**
  * Generates a WhatsApp link.
  * @param client The client object containing the contact number.
+ * @param message An optional message to pre-fill.
  * @returns A fully formed https://wa.me link.
  */
-export const generateWhatsappLink = (client: Client): string => {
+export const generateWhatsappLink = (client: Client, message?: string): string => {
     // Clean the phone number, removing non-digit characters.
     let fullPhone = client.contact.replace(/\D/g, '');
     
@@ -14,5 +15,11 @@ export const generateWhatsappLink = (client: Client): string => {
        fullPhone = `55${fullPhone}`;
     }
 
-    return `https://wa.me/${fullPhone}`;
+    const baseUrl = `https://wa.me/${fullPhone}`;
+
+    if (message) {
+        return `${baseUrl}?text=${encodeURIComponent(message)}`;
+    }
+
+    return baseUrl;
 };

@@ -2,12 +2,13 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours } from 'date-fns';
+import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours, endOfMonth, subMonths, startOfYear, endOfYear, subYears, addMonths, isAfter } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 
 const formSchema = z.object({
@@ -561,7 +562,7 @@ export async function deleteUserRecord(userIdToDelete: string, adminId: string) 
   }
 }
 
-export async function getDashboardAnalytics(adminId: string, groupId: string | null = null): Promise<DashboardAnalyticsData> {
+export async function getDashboardAnalytics(adminId: string, period: 'weekly' | 'monthly' = 'weekly', groupId: string | null = null): Promise<DashboardAnalyticsData> {
   if (!db) throw new Error('Firebase não está configurado.');
   if (!await isAdmin(adminId)) {
     throw new Error('Acesso negado.');
@@ -630,60 +631,71 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
 
 
   const now = subHours(new Date(), BRAZIL_TIMEZONE_OFFSET);
-  const startOfThisWeek = startOfWeek(now, { weekStartsOn: 1 });
-  const endOfThisWeek = endOfWeek(now, { weekStartsOn: 1 });
-  const startOfLastWeek = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-  const endOfLastWeek = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+  
+  let startOfCurrentPeriod: Date, endOfCurrentPeriod: Date, startOfPreviousPeriod: Date, endOfPreviousPeriod: Date;
 
-  let leadsThisWeekCount = 0;
-  let leadsLastWeekCount = 0;
+  if (period === 'weekly') {
+    startOfCurrentPeriod = startOfWeek(now, { weekStartsOn: 1 });
+    endOfCurrentPeriod = endOfWeek(now, { weekStartsOn: 1 });
+    startOfPreviousPeriod = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+    endOfPreviousPeriod = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+  } else { // monthly
+    startOfCurrentPeriod = startOfMonth(now);
+    endOfCurrentPeriod = endOfMonth(now);
+    startOfPreviousPeriod = startOfMonth(subMonths(now, 1));
+    endOfPreviousPeriod = endOfMonth(subMonths(now, 1));
+  }
+
+
+  let leadsThisPeriodCount = 0;
+  let leadsLastPeriodCount = 0;
 
   clients.forEach(client => {
     const createdAtDate = (client.createdAt as Timestamp).toDate();
-    if (isWithinInterval(createdAtDate, { start: startOfThisWeek, end: endOfThisWeek })) {
-      leadsThisWeekCount++;
-    } else if (isWithinInterval(createdAtDate, { start: startOfLastWeek, end: endOfLastWeek })) {
-      leadsLastWeekCount++;
+    if (isWithinInterval(createdAtDate, { start: startOfCurrentPeriod, end: endOfCurrentPeriod })) {
+      leadsThisPeriodCount++;
+    } else if (isWithinInterval(createdAtDate, { start: startOfPreviousPeriod, end: endOfPreviousPeriod })) {
+      leadsLastPeriodCount++;
     }
   });
 
-  const salesThisWeek = sales.filter(sale =>
-    isWithinInterval(sale.saleDate, { start: startOfThisWeek, end: endOfThisWeek })
+  const salesThisPeriod = sales.filter(sale =>
+    isWithinInterval(sale.saleDate, { start: startOfCurrentPeriod, end: endOfCurrentPeriod })
   );
-  const salesLastWeek = sales.filter(sale =>
-    isWithinInterval(sale.saleDate, { start: startOfLastWeek, end: endOfLastWeek })
+  const salesLastPeriod = sales.filter(sale =>
+    isWithinInterval(sale.saleDate, { start: startOfPreviousPeriod, end: endOfPreviousPeriod })
   );
 
-  const salesThisWeekCount = salesThisWeek.length;
-  const salesLastWeekCount = salesLastWeek.length;
+  const salesThisPeriodCount = salesThisPeriod.length;
+  const salesLastPeriodCount = salesLastPeriod.length;
   
-  const revenueThisWeek = salesThisWeek.reduce((sum, sale) => sum + sale.saleValue, 0);
-  const revenueLastWeek = salesLastWeek.reduce((sum, sale) => sum + sale.saleValue, 0);
+  const revenueThisPeriod = salesThisPeriod.reduce((sum, sale) => sum + sale.saleValue, 0);
+  const revenueLastPeriod = salesLastPeriod.reduce((sum, sale) => sum + sale.saleValue, 0);
   
   const calculateChange = (current: number, previous: number) => {
     if (previous === 0) return current > 0 ? 100 : 0;
     return ((current - previous) / previous) * 100;
   };
 
-  const weeklyLeads = {
-    count: leadsThisWeekCount,
-    change: calculateChange(leadsThisWeekCount, leadsLastWeekCount),
+  const leads = {
+    count: leadsThisPeriodCount,
+    change: calculateChange(leadsThisPeriodCount, leadsLastPeriodCount),
   };
-  const weeklySales = {
-    count: salesThisWeekCount,
-    change: calculateChange(salesThisWeekCount, salesLastWeekCount),
+  const salesData = {
+    count: salesThisPeriodCount,
+    change: calculateChange(salesThisPeriodCount, salesLastPeriodCount),
   };
-  const weeklyRevenue = {
-    total: revenueThisWeek,
-    change: calculateChange(revenueThisWeek, revenueLastWeek),
+  const revenue = {
+    total: revenueThisPeriod,
+    change: calculateChange(revenueThisPeriod, revenueLastPeriod),
   };
   
-  const conversionRateThisWeek = leadsThisWeekCount > 0 ? (salesThisWeekCount / leadsThisWeekCount) * 100 : 0;
-  const conversionRateLastWeek = leadsLastWeekCount > 0 ? (salesLastWeekCount / leadsLastWeekCount) * 100 : 0;
+  const conversionRateThisPeriod = leadsThisPeriodCount > 0 ? (salesThisPeriodCount / leadsThisPeriodCount) * 100 : 0;
+  const conversionRateLastPeriod = leadsLastPeriodCount > 0 ? (salesLastPeriodCount / leadsLastPeriodCount) * 100 : 0;
   
-  const weeklyConversionRate = {
-    rate: conversionRateThisWeek,
-    change: calculateChange(conversionRateThisWeek, conversionRateLastWeek)
+  const conversionRate = {
+    rate: conversionRateThisPeriod,
+    change: calculateChange(conversionRateThisPeriod, conversionRateLastPeriod)
   };
 
   const thirtyDaysAgo = startOfDay(subDays(now, 29));
@@ -756,10 +768,10 @@ export async function getDashboardAnalytics(adminId: string, groupId: string | n
     .sort((a, b) => b.revenue - a.revenue);
     
   return {
-    weeklyLeads,
-    weeklySales,
-    weeklyRevenue,
-    weeklyConversionRate,
+    leads,
+    sales: salesData,
+    revenue,
+    conversionRate,
     abandonedLeadsCount,
     performanceOverTime,
     salesRanking,
@@ -835,6 +847,10 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
         startDate = startOfMonth(now);
         endDate = endOfMonth(now);
         break;
+      case 'yearly':
+        startDate = startOfYear(now);
+        endDate = endOfYear(now);
+        break;
     }
   }
 
@@ -858,6 +874,7 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
       totalRepurchases: 0,
       leadsByStatus: { "Novo Lead": 0, "Em negociação": 0, "Fechado": 0, "Pós-venda": 0 },
       conversionRate: 0,
+      performanceOverTime: [],
     });
   });
 
@@ -881,17 +898,206 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
       }
     }
   });
+  
+  // -- Chart data calculation --
+  let chartStartDate: Date;
+  const chartEndDate: Date = endOfDay(now);
+  let chartLabelFormat: string;
+  let chartDateKeyFormat: string;
+  const performanceMapTemplate: Map<string, { leads: number; sales: number }> = new Map();
 
-  const result: SellerAnalytics[] = [];
+  if (period === 'yearly') {
+    chartStartDate = startOfYear(now);
+    chartLabelFormat = 'MMM';
+    chartDateKeyFormat = 'yyyy-MM';
+    for (let i = 0; i < 12; i++) {
+      const monthDate = startOfMonth(addMonths(chartStartDate, i));
+      if (isAfter(monthDate, chartEndDate)) break;
+      performanceMapTemplate.set(format(monthDate, chartDateKeyFormat), { leads: 0, sales: 0 });
+    }
+  } else if (period === 'monthly') {
+    chartStartDate = startOfMonth(now);
+    chartLabelFormat = 'dd';
+    chartDateKeyFormat = 'yyyy-MM-dd';
+    for (let d = new Date(chartStartDate); d <= chartEndDate; d = addDays(d, 1)) {
+      performanceMapTemplate.set(format(d, chartDateKeyFormat), { leads: 0, sales: 0 });
+    }
+  } else if (period === 'weekly' || period === 'daily') {
+    chartStartDate = startOfWeek(now, { weekStartsOn: 1 });
+    const endOfWeekDate = endOfWeek(now, { weekStartsOn: 1 });
+    chartLabelFormat = 'dd/MM';
+    chartDateKeyFormat = 'yyyy-MM-dd';
+    for (let d = new Date(chartStartDate); d <= endOfWeekDate; d = addDays(d, 1)) {
+      if (isAfter(d, chartEndDate)) break; // Don't show future days.
+      performanceMapTemplate.set(format(d, chartDateKeyFormat), { leads: 0, sales: 0 });
+    }
+  } else { // 'total'
+    chartStartDate = startOfDay(subDays(now, 29));
+    chartLabelFormat = 'dd/MM';
+    chartDateKeyFormat = 'yyyy-MM-dd';
+    for (let d = new Date(chartStartDate); d <= chartEndDate; d = addDays(d, 1)) {
+      performanceMapTemplate.set(format(d, chartDateKeyFormat), { leads: 0, sales: 0 });
+    }
+  }
+
+  const clientsForChart = allClientsData.filter(c => isWithinInterval(c.createdAt, { start: chartStartDate, end: chartEndDate }));
+  const salesForChart = allSalesData.filter(s => isWithinInterval(s.saleDate, { start: chartStartDate, end: chartEndDate }));
+
   analyticsMap.forEach(sellerAnalytics => {
+    // Deep copy the template map for each seller
+    const performanceMap: Map<string, { leads: number; sales: number }> =
+      new Map(JSON.parse(JSON.stringify(Array.from(performanceMapTemplate))));
+
+    clientsForChart
+      .filter(c => c.userId === sellerAnalytics.sellerId)
+      .forEach(client => {
+        const adjustedDate = subHours(client.createdAt, BRAZIL_TIMEZONE_OFFSET);
+        const dateStr = format(adjustedDate, chartDateKeyFormat);
+        if (performanceMap.has(dateStr)) {
+          performanceMap.get(dateStr)!.leads += 1;
+        }
+      });
+
+    salesForChart
+      .filter(s => s.userId === sellerAnalytics.sellerId)
+      .forEach(sale => {
+        const adjustedDate = subHours(sale.saleDate, BRAZIL_TIMEZONE_OFFSET);
+        const dateStr = format(adjustedDate, chartDateKeyFormat);
+        if (performanceMap.has(dateStr)) {
+          performanceMap.get(dateStr)!.sales += 1;
+        }
+      });
+
+    sellerAnalytics.performanceOverTime = Array.from(performanceMap.entries())
+      .map(([date, data]) => ({ fullDate: date, ...data }))
+      .sort((a, b) => a.fullDate.localeCompare(b.fullDate))
+      .map(({ fullDate, leads, sales }) => ({
+        date: format(parseISO(fullDate.length === 7 ? `${fullDate}-01` : fullDate), chartLabelFormat, { locale: ptBR }),
+        leads,
+        sales
+      }));
+    
     sellerAnalytics.conversionRate = sellerAnalytics.totalLeads > 0
       ? (sellerAnalytics.totalSales / sellerAnalytics.totalLeads) * 100
       : 0;
-    result.push(sellerAnalytics);
   });
 
+  const result: SellerAnalytics[] = Array.from(analyticsMap.values());
   return result.sort((a, b) => b.totalSales - a.totalSales);
 }
+
+export async function getSellerPerformanceData(userId: string, period: 'yearly' | 'monthly' | 'weekly' = 'monthly'): Promise<SellerPerformanceData> {
+  if (!userId || !db) {
+    throw new Error('Usuário ou conexão com o banco de dados inválida.');
+  }
+
+  const calculateChange = (current: number, previous: number) => {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return ((current - previous) / previous) * 100;
+  };
+
+  const now = subHours(new Date(), BRAZIL_TIMEZONE_OFFSET);
+  
+  let startOfCurrentPeriod: Date, endOfCurrentPeriod: Date, startOfPreviousPeriod: Date, endOfPreviousPeriod: Date;
+
+  if (period === 'weekly') {
+    startOfCurrentPeriod = startOfWeek(now, { weekStartsOn: 1 });
+    endOfCurrentPeriod = endOfWeek(now, { weekStartsOn: 1 });
+    startOfPreviousPeriod = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+    endOfPreviousPeriod = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+  } else if (period === 'yearly') {
+    startOfCurrentPeriod = startOfYear(now);
+    endOfCurrentPeriod = endOfYear(now);
+    startOfPreviousPeriod = startOfYear(subYears(now, 1));
+    endOfPreviousPeriod = endOfYear(subYears(now, 1));
+  } else { // monthly
+    startOfCurrentPeriod = startOfMonth(now);
+    endOfCurrentPeriod = endOfMonth(now);
+    startOfPreviousPeriod = startOfMonth(subMonths(now, 1));
+    endOfPreviousPeriod = endOfMonth(subMonths(now, 1));
+  }
+
+  const [usersSnapshot, allClientsSnapshot, allSalesSnapshot, groupsSnapshot] = await Promise.all([
+    getDocs(query(collection(db, 'users'), where('role', '==', 'vendedor'))),
+    getDocs(collection(db, 'clients')),
+    getDocs(collection(db, 'sales')),
+    getDocs(collection(db, 'groups'))
+  ]);
+
+  const allSellers = usersSnapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as Omit<UserProfile, 'id'>) }));
+  const currentUser = allSellers.find(s => s.id === userId);
+  const groupNameMap = new Map(groupsSnapshot.docs.map(doc => [doc.id, doc.data().name]));
+
+  const allClients = allClientsSnapshot.docs.map(doc => ({ ...doc.data() as Omit<Client, 'createdAt'>, id: doc.id, createdAt: (doc.data().createdAt as Timestamp).toDate(), userId: doc.data().userId }));
+  const allSales = allSalesSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, saleDate: (doc.data().saleDate as Timestamp).toDate() }));
+
+  const clientsThisPeriod = allClients.filter(c => isWithinInterval(c.createdAt, { start: startOfCurrentPeriod, end: endOfCurrentPeriod }));
+  const salesThisPeriod = allSales.filter(s => isWithinInterval(s.saleDate, { start: startOfCurrentPeriod, end: endOfCurrentPeriod }));
+
+  const clientsLastPeriod = allClients.filter(c => isWithinInterval(c.createdAt, { start: startOfPreviousPeriod, end: endOfPreviousPeriod }));
+  const salesLastPeriod = allSales.filter(s => isWithinInterval(s.saleDate, { start: startOfPreviousPeriod, end: endOfPreviousPeriod }));
+
+  const personalLeadsThis = clientsThisPeriod.filter(lead => lead.userId === userId).length;
+  const personalSalesThis = salesThisPeriod.filter(sale => sale.userId === userId);
+  const personalSalesCountThis = personalSalesThis.length;
+  const personalRevenueThis = personalSalesThis.reduce((sum, sale) => sum + (sale.saleValue || 0), 0);
+  const personalConversionRateThis = personalLeadsThis > 0 ? (personalSalesCountThis / personalLeadsThis) * 100 : 0;
+
+  const personalLeadsLast = clientsLastPeriod.filter(lead => lead.userId === userId).length;
+  const personalSalesLast = salesLastPeriod.filter(sale => sale.userId === userId);
+  const personalSalesCountLast = personalSalesLast.length;
+  const personalRevenueLast = personalSalesLast.reduce((sum, sale) => sum + (sale.saleValue || 0), 0);
+  const personalConversionRateLast = personalLeadsLast > 0 ? (personalSalesCountLast / personalLeadsLast) * 100 : 0;
+
+  const personalStats = {
+    revenue: { total: personalRevenueThis, change: calculateChange(personalRevenueThis, personalRevenueLast) },
+    leads: { count: personalLeadsThis, change: calculateChange(personalLeadsThis, personalLeadsLast) },
+    sales: { count: personalSalesCountThis, change: calculateChange(personalSalesCountThis, personalSalesCountLast) },
+    conversionRate: { rate: personalConversionRateThis, change: calculateChange(personalConversionRateThis, personalConversionRateLast) },
+  };
+
+  const sellerStatsMap = new Map<string, { sellerName: string; groupId?: string; totalSales: number; totalRevenue: number }>();
+  allSellers.forEach(seller => sellerStatsMap.set(seller.id, { sellerName: seller.name, groupId: seller.groupId, totalSales: 0, totalRevenue: 0 }));
+
+  salesThisPeriod.forEach(sale => {
+    if (sellerStatsMap.has(sale.userId)) {
+      const stats = sellerStatsMap.get(sale.userId)!;
+      stats.totalSales += 1;
+      stats.totalRevenue += (sale.saleValue || 0);
+    }
+  });
+  
+  const sortFn = (a: any, b: any) => b.totalRevenue - a.totalRevenue || b.totalSales - a.totalSales;
+
+  const generalRanking = Array.from(sellerStatsMap.entries()).map(([sellerId, data]) => ({
+    sellerId,
+    sellerName: data.sellerName,
+    totalSales: data.totalSales,
+    totalRevenue: data.totalRevenue,
+  })).sort(sortFn);
+
+  let groupRanking: SellerPerformanceData['groupRanking'] = null;
+  if (currentUser?.groupId) {
+    groupRanking = Array.from(sellerStatsMap.entries())
+      .filter(([, data]) => data.groupId === currentUser.groupId)
+      .map(([sellerId, data]) => ({
+        sellerId,
+        sellerName: data.sellerName,
+        totalSales: data.totalSales,
+        totalRevenue: data.totalRevenue,
+      }))
+      .sort(sortFn);
+  }
+
+  return {
+    personalStats,
+    generalRanking,
+    groupRanking,
+    groupName: currentUser?.groupId ? groupNameMap.get(currentUser.groupId) : undefined,
+    period,
+  };
+}
+
 
 export async function updateUserGroup(userIdToUpdate: string, groupId: string | null, adminId: string) {
   if (!db) return { success: false, error: "Firebase não configurado." };
@@ -1144,5 +1350,102 @@ export async function checkContactExists(contact: string, currentUserId: string,
   } catch (e) {
     console.error("Error checking contact existence:", e);
     return { status: 'error', message: "Erro ao verificar contato." };
+  }
+}
+
+// ======== Message Template Actions ========
+
+const templateFormSchema = z.object({
+  title: z.string().min(3, "O título deve ter pelo menos 3 caracteres."),
+  content: z.string().min(10, "O conteúdo do template deve ter pelo menos 10 caracteres."),
+});
+
+export async function getMessageTemplates(userId: string): Promise<MessageTemplate[]> {
+  if (!userId) return [];
+  if (!db) throw new Error("Firebase não está configurado.");
+  
+  const templatesRef = collection(db, 'messageTemplates');
+  const q = query(templatesRef, orderBy('createdAt', 'desc'));
+  const querySnapshot = await getDocs(q);
+
+  return querySnapshot.docs.map(doc => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      ...data,
+      createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+    } as MessageTemplate;
+  });
+}
+
+export async function createMessageTemplate(data: unknown, adminId: string) {
+  if (!db) return { success: false, error: "Firebase não configurado." };
+  if (!await isAdmin(adminId)) {
+    return { success: false, error: 'Acesso negado.' };
+  }
+
+  const result = templateFormSchema.safeParse(data);
+  if (!result.success) {
+    const fieldErrors = result.error.flatten().fieldErrors;
+    return { success: false, error: fieldErrors.title?.[0] || fieldErrors.content?.[0] || "Erro de validação." };
+  }
+  
+  try {
+    const now = Timestamp.now();
+    const docRef = await addDoc(collection(db, 'messageTemplates'), {
+      ...result.data,
+      adminId,
+      createdAt: now,
+    });
+    revalidatePath('/admin/dashboard');
+
+    const createdTemplate: MessageTemplate = {
+      id: docRef.id,
+      title: result.data.title,
+      content: result.data.content,
+      adminId,
+      createdAt: now.toDate().toISOString(),
+    };
+
+    return { success: true, template: createdTemplate };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao criar template.' };
+  }
+}
+
+export async function updateMessageTemplate(templateId: string, data: unknown, adminId: string) {
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+  if (!await isAdmin(adminId)) {
+    return { success: false, error: 'Acesso negado.' };
+  }
+
+  const result = templateFormSchema.safeParse(data);
+  if (!result.success) {
+    const fieldErrors = result.error.flatten().fieldErrors;
+    return { success: false, error: fieldErrors.title?.[0] || fieldErrors.content?.[0] || "Erro de validação." };
+  }
+
+  try {
+    const templateDocRef = doc(db, 'messageTemplates', templateId);
+    await updateDoc(templateDocRef, result.data);
+    revalidatePath('/admin/dashboard');
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao atualizar template.' };
+  }
+}
+
+export async function deleteMessageTemplate(templateId: string, adminId: string) {
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+  if (!await isAdmin(adminId)) {
+    return { success: false, error: 'Acesso negado.' };
+  }
+
+  try {
+    await deleteDoc(doc(db, "messageTemplates", templateId));
+    revalidatePath('/admin/dashboard');
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message || "Erro ao deletar template." };
   }
 }

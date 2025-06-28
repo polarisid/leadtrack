@@ -1,4 +1,5 @@
 
+
 export const productCategories = ['Eletrodomésticos', 'TV e AV', 'Telefonia', 'Informática', 'Outros'] as const;
 export type ProductCategory = (typeof productCategories)[number];
 
@@ -11,7 +12,7 @@ export type UserRole = (typeof userRoles)[number];
 export const userStatuses = ['active', 'inactive'] as const;
 export type UserStatus = (typeof userStatuses)[number];
 
-export const analyticsPeriods = ['total', 'monthly', 'weekly', 'daily'] as const;
+export const analyticsPeriods = ['total', 'yearly', 'monthly', 'weekly', 'daily'] as const;
 export type AnalyticsPeriod = (typeof analyticsPeriods)[number];
 
 
@@ -63,20 +64,28 @@ export interface UserProfile {
   groupId?: string;
 }
 
+export interface MessageTemplate {
+  id: string;
+  title: string;
+  content: string;
+  adminId: string;
+  createdAt: string;
+}
+
 export interface DashboardAnalyticsData {
-  weeklySales: {
+  sales: {
     count: number;
     change: number;
   };
-   weeklyRevenue: {
+  revenue: {
     total: number;
     change: number;
   };
-  weeklyLeads: {
+  leads: {
     count: number;
     change: number;
   };
-  weeklyConversionRate: {
+  conversionRate: {
     rate: number;
     change: number;
   };
@@ -104,4 +113,32 @@ export interface SellerAnalytics {
   totalRevenue: number;
   totalRepurchases: number;
   conversionRate: number;
+  performanceOverTime: {
+    date: string;
+    leads: number;
+    sales: number;
+  }[];
+}
+
+export interface SellerPerformanceData {
+  personalStats: {
+    leads: { count: number; change: number };
+    sales: { count: number; change: number };
+    revenue: { total: number; change: number };
+    conversionRate: { rate: number; change: number };
+  };
+  generalRanking: {
+    sellerId: string;
+    sellerName: string;
+    totalSales: number;
+    totalRevenue: number;
+  }[];
+  groupRanking: {
+    sellerId: string;
+    sellerName: string;
+    totalSales: number;
+    totalRevenue: number;
+  }[] | null;
+  groupName?: string;
+  period: 'yearly' | 'monthly' | 'weekly';
 }
