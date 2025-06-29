@@ -562,7 +562,7 @@ export async function deleteUserRecord(userIdToDelete: string, adminId: string) 
   }
 }
 
-export async function getDashboardAnalytics(adminId: string, period: 'weekly' | 'monthly' = 'weekly', groupId: string | null = null): Promise<DashboardAnalyticsData> {
+export async function getDashboardAnalytics(adminId: string, period: 'weekly' | 'monthly' | 'yearly' = 'weekly', groupId: string | null = null): Promise<DashboardAnalyticsData> {
   if (!db) throw new Error('Firebase não está configurado.');
   if (!await isAdmin(adminId)) {
     throw new Error('Acesso negado.');
@@ -639,11 +639,16 @@ export async function getDashboardAnalytics(adminId: string, period: 'weekly' | 
     endOfCurrentPeriod = endOfWeek(now, { weekStartsOn: 1 });
     startOfPreviousPeriod = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
     endOfPreviousPeriod = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-  } else { // monthly
+  } else if (period === 'monthly') {
     startOfCurrentPeriod = startOfMonth(now);
     endOfCurrentPeriod = endOfMonth(now);
     startOfPreviousPeriod = startOfMonth(subMonths(now, 1));
     endOfPreviousPeriod = endOfMonth(subMonths(now, 1));
+  } else { // yearly
+    startOfCurrentPeriod = startOfYear(now);
+    endOfCurrentPeriod = endOfYear(now);
+    startOfPreviousPeriod = startOfYear(subYears(now, 1));
+    endOfPreviousPeriod = endOfYear(subYears(now, 1));
   }
 
 

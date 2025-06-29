@@ -91,7 +91,7 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
-const ComparisonText = ({ value, period }: { value: number | undefined; period: 'weekly' | 'monthly' }) => {
+const ComparisonText = ({ value, period }: { value: number | undefined; period: 'weekly' | 'monthly' | 'yearly' }) => {
   if (value === undefined || !isFinite(value)) {
     return (
       <p className="text-xs text-muted-foreground flex items-center">
@@ -102,7 +102,11 @@ const ComparisonText = ({ value, period }: { value: number | undefined; period: 
   
   const isPositive = value > 0;
   const isNegative = value < 0;
-  const periodText = period === 'weekly' ? 'na última semana' : 'no último mês';
+  
+  let periodText = 'no último período';
+  if (period === 'weekly') periodText = 'na última semana';
+  if (period === 'monthly') periodText = 'no último mês';
+  if (period === 'yearly') periodText = 'no último ano';
 
   if (value === 0) {
     return (
@@ -157,7 +161,7 @@ export default function AdminDashboardPage() {
   const [userGroupFilter, setUserGroupFilter] = useState<string>('all');
   
   const [overviewGroupFilter, setOverviewGroupFilter] = useState<string>('all');
-  const [overviewPeriod, setOverviewPeriod] = useState<'weekly' | 'monthly'>('weekly');
+  const [overviewPeriod, setOverviewPeriod] = useState<'weekly' | 'monthly' | 'yearly'>('weekly');
 
 
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -176,7 +180,8 @@ export default function AdminDashboardPage() {
   const [isEditTemplateOpen, setIsEditTemplateOpen] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<MessageTemplate | null>(null);
 
-  const periodMap = { weekly: 'Semana', monthly: 'Mês' };
+  const periodMap = { weekly: 'Semana', monthly: 'Mês', yearly: 'Ano' };
+  const periodArticleMap = { weekly: 'da', monthly: 'do', yearly: 'do' };
   
   const periodChartTitleMap: Record<AnalyticsPeriod, string> = {
     daily: "Esta Semana",
@@ -787,13 +792,14 @@ export default function AdminDashboardPage() {
               
               <TabsContent value="overview" className="space-y-8">
                 <div className="flex justify-end gap-2">
-                    <Select value={overviewPeriod} onValueChange={(value) => setOverviewPeriod(value as 'weekly' | 'monthly')}>
+                    <Select value={overviewPeriod} onValueChange={(value) => setOverviewPeriod(value as 'weekly' | 'monthly' | 'yearly')}>
                         <SelectTrigger className="w-full sm:w-[180px]">
                             <SelectValue placeholder="Período" />
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem value="weekly">Visão Semanal</SelectItem>
                             <SelectItem value="monthly">Visão Mensal</SelectItem>
+                            <SelectItem value="yearly">Visão Anual</SelectItem>
                         </SelectContent>
                     </Select>
                     <Select value={overviewGroupFilter} onValueChange={setOverviewGroupFilter}>
@@ -814,7 +820,7 @@ export default function AdminDashboardPage() {
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
                     <Card>
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Receita da {periodMap[overviewPeriod]}</CardTitle>
+                        <CardTitle className="text-sm font-medium">Receita {periodArticleMap[overviewPeriod]} {periodMap[overviewPeriod]}</CardTitle>
                         <CreditCard className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
@@ -830,7 +836,7 @@ export default function AdminDashboardPage() {
                     </Card>
                      <Card>
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Vendas da {periodMap[overviewPeriod]}</CardTitle>
+                        <CardTitle className="text-sm font-medium">Vendas {periodArticleMap[overviewPeriod]} {periodMap[overviewPeriod]}</CardTitle>
                         <DollarSign className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
@@ -844,7 +850,7 @@ export default function AdminDashboardPage() {
                     </Card>
                     <Card>
                       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Leads da {periodMap[overviewPeriod]}</CardTitle>
+                        <CardTitle className="text-sm font-medium">Leads {periodArticleMap[overviewPeriod]} {periodMap[overviewPeriod]}</CardTitle>
                         <Target className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
