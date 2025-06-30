@@ -2,12 +2,12 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours, endOfMonth, subMonths, startOfYear, endOfYear, subYears, addMonths, isAfter } from 'date-fns';
+import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours, endOfMonth, subMonths, startOfYear, endOfYear, subYears, addMonths, isAfter, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 
@@ -19,6 +19,15 @@ const formSchema = z.object({
   desiredProduct: z.enum(productCategories),
   status: z.enum(clientStatuses),
   remarketingReminder: z.string().optional(),
+  referredBy: z.string().optional(),
+});
+
+const captureLeadSchema = z.object({
+  name: z.string().min(2, "Seu nome deve ter pelo menos 2 caracteres."),
+  city: z.string().min(2, "Sua cidade deve ter pelo menos 2 caracteres."),
+  contact: z.string().min(10, "O contato com DDD deve ter pelo menos 10 dígitos."),
+  desiredProduct: z.enum(productCategories),
+  referredBy: z.string().optional(),
 });
 
 const BRAZIL_TIMEZONE_OFFSET = 3;
@@ -361,8 +370,37 @@ export async function deleteClient(id: string, userId: string) {
     }
     try {
         const clientDocRef = doc(db, 'clients', id);
-        await deleteDoc(clientDocRef);
+        const clientDoc = await getDoc(clientDocRef);
+
+        if (!clientDoc.exists()) {
+            return { error: 'Cliente não encontrado.' };
+        }
+
+        const clientData = clientDoc.data();
+        const batch = writeBatch(db);
+
+        // Create an audit log for the deletion
+        const auditLogRef = doc(collection(db, 'audit_logs'));
+        batch.set(auditLogRef, {
+            action: 'client_deleted',
+            actorId: userId, // The user performing the action
+            entityOwnerId: clientData.userId, // The owner of the lead
+            entityId: id,
+            timestamp: Timestamp.now(),
+            details: {
+                clientName: clientData.name,
+                clientCity: clientData.city,
+                clientContact: clientData.contact
+            }
+        });
+        
+        // Perform the actual deletion
+        batch.delete(clientDocRef);
+        
+        await batch.commit();
+
         revalidatePath('/');
+        revalidatePath('/admin/dashboard');
         return { success: true };
     } catch (e: any) {
         return { error: e.message || 'Erro ao deletar cliente.' };
@@ -636,9 +674,9 @@ export async function getDashboardAnalytics(adminId: string, period: 'weekly' | 
 
   if (period === 'weekly') {
     startOfCurrentPeriod = startOfWeek(now, { weekStartsOn: 1 });
-    endOfCurrentPeriod = endOfWeek(now, { weekStartsOn: 1 });
+    endOfCurrentPeriod = endOfDay(endOfWeek(now, { weekStartsOn: 1 }));
     startOfPreviousPeriod = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-    endOfPreviousPeriod = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+    endOfPreviousPeriod = endOfDay(endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 }));
   } else if (period === 'monthly') {
     startOfCurrentPeriod = startOfMonth(now);
     endOfCurrentPeriod = endOfMonth(now);
@@ -797,10 +835,11 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
     usersQuery = query(usersRef, where('role', '==', 'vendedor'));
   }
 
-  const [usersSnapshot, allClientsSnapshot, allSalesSnapshot] = await Promise.all([
+  const [usersSnapshot, allClientsSnapshot, allSalesSnapshot, auditLogsSnapshot] = await Promise.all([
     getDocs(usersQuery),
     getDocs(collection(db, 'clients')),
     getDocs(query(collection(db, 'sales'), orderBy('saleDate', 'asc'))),
+    getDocs(query(collection(db, 'audit_logs'), where('action', '==', 'client_deleted')))
   ]);
 
   const sellers = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as Omit<UserProfile, 'id'> }));
@@ -830,8 +869,17 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
     if (clientFirstPurchase.has(sale.clientId)) {
       repurchaseSaleIds.add(sale.id);
     } else {
-      clientFirstPurchase.add(sale.clientId);
+      clientFirstPurchase.add(sale.id);
     }
+  });
+
+  const deletedLeadsCountMap = new Map<string, number>();
+  auditLogsSnapshot.forEach(logDoc => {
+      const logData = logDoc.data();
+      const ownerId = logData.entityOwnerId;
+      if (ownerId) {
+          deletedLeadsCountMap.set(ownerId, (deletedLeadsCountMap.get(ownerId) || 0) + 1);
+      }
   });
 
   const now = subHours(new Date(), BRAZIL_TIMEZONE_OFFSET);
@@ -846,7 +894,7 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
         break;
       case 'weekly':
         startDate = startOfWeek(now, { weekStartsOn: 1 });
-        endDate = endOfWeek(now, { weekStartsOn: 1 });
+        endDate = endOfDay(endOfWeek(now, { weekStartsOn: 1 }));
         break;
       case 'monthly':
         startDate = startOfMonth(now);
@@ -877,6 +925,7 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
       totalSales: 0,
       totalRevenue: 0,
       totalRepurchases: 0,
+      totalDeletedLeads: deletedLeadsCountMap.get(seller.id) || 0,
       leadsByStatus: { "Novo Lead": 0, "Em negociação": 0, "Fechado": 0, "Pós-venda": 0 },
       conversionRate: 0,
       performanceOverTime: [],
@@ -1007,9 +1056,9 @@ export async function getSellerPerformanceData(userId: string, period: 'yearly' 
 
   if (period === 'weekly') {
     startOfCurrentPeriod = startOfWeek(now, { weekStartsOn: 1 });
-    endOfCurrentPeriod = endOfWeek(now, { weekStartsOn: 1 });
+    endOfCurrentPeriod = endOfDay(endOfWeek(now, { weekStartsOn: 1 }));
     startOfPreviousPeriod = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-    endOfPreviousPeriod = endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
+    endOfPreviousPeriod = endOfDay(endOfWeek(subWeeks(now, 1), { weekStartsOn: 1 }));
   } else if (period === 'yearly') {
     startOfCurrentPeriod = startOfYear(now);
     endOfCurrentPeriod = endOfYear(now);
@@ -1021,12 +1070,14 @@ export async function getSellerPerformanceData(userId: string, period: 'yearly' 
     startOfPreviousPeriod = startOfMonth(subMonths(now, 1));
     endOfPreviousPeriod = endOfMonth(subMonths(now, 1));
   }
-
-  const [usersSnapshot, allClientsSnapshot, allSalesSnapshot, groupsSnapshot] = await Promise.all([
+  
+  const [usersSnapshot, allClientsSnapshot, allSalesSnapshot, groupsSnapshot, userGoalsSnapshot, groupGoalsSnapshot] = await Promise.all([
     getDocs(query(collection(db, 'users'), where('role', '==', 'vendedor'))),
     getDocs(collection(db, 'clients')),
     getDocs(collection(db, 'sales')),
-    getDocs(collection(db, 'groups'))
+    getDocs(collection(db, 'groups')),
+    getDocs(query(collection(db, 'userGoals'), where('period', '==', format(now, 'yyyy-MM')))),
+    getDocs(query(collection(db, 'goals'), where('period', '==', format(now, 'yyyy-MM'))))
   ]);
 
   const allSellers = usersSnapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as Omit<UserProfile, 'id'>) }));
@@ -1054,11 +1105,12 @@ export async function getSellerPerformanceData(userId: string, period: 'yearly' 
   const personalRevenueLast = personalSalesLast.reduce((sum, sale) => sum + (sale.saleValue || 0), 0);
   const personalConversionRateLast = personalLeadsLast > 0 ? (personalSalesCountLast / personalLeadsLast) * 100 : 0;
 
-  const personalStats = {
+  const personalStats: SellerPerformanceData['personalStats'] = {
     revenue: { total: personalRevenueThis, change: calculateChange(personalRevenueThis, personalRevenueLast) },
     leads: { count: personalLeadsThis, change: calculateChange(personalLeadsThis, personalLeadsLast) },
     sales: { count: personalSalesCountThis, change: calculateChange(personalSalesCountThis, personalSalesCountLast) },
     conversionRate: { rate: personalConversionRateThis, change: calculateChange(personalConversionRateThis, personalConversionRateLast) },
+    goal: null,
   };
 
   const sellerStatsMap = new Map<string, { sellerName: string; groupId?: string; totalSales: number; totalRevenue: number }>();
@@ -1094,12 +1146,100 @@ export async function getSellerPerformanceData(userId: string, period: 'yearly' 
       .sort(sortFn);
   }
 
+  // --- Goal Calculations (always for the current month) ---
+  const startOfGoalPeriod = startOfMonth(now);
+  const endOfGoalPeriod = endOfMonth(now);
+  const salesForGoals = allSales.filter(s => isWithinInterval(s.saleDate, { start: startOfGoalPeriod, end: endOfGoalPeriod }));
+  
+  const userRevenueForGoals = new Map<string, number>();
+  salesForGoals.forEach(sale => {
+    const currentRevenue = userRevenueForGoals.get(sale.userId) || 0;
+    userRevenueForGoals.set(sale.userId, currentRevenue + (sale.saleValue || 0));
+  });
+
+  const userGoalsMap = new Map<string, { targetValue: number }>();
+  userGoalsSnapshot.docs.forEach(doc => {
+    const data = doc.data();
+    userGoalsMap.set(data.userId, { targetValue: data.targetValue });
+  });
+
+  // Personal Goal
+  const personalGoalData = userGoalsMap.get(userId);
+  if (personalGoalData) {
+    const target = personalGoalData.targetValue;
+    const current = userRevenueForGoals.get(userId) || 0;
+    
+    // -- New Daily Goal Logic --
+    const today = now; // Use the adjusted 'now'
+    const endOfMonthDate = endOfGoalPeriod;
+    let remainingBusinessDays = 0;
+    let loopDate = today;
+
+    while (loopDate <= endOfMonthDate) {
+        const dayOfWeek = getDay(loopDate); // 0=Sun, 1=Mon, ..., 6=Sat
+        if (dayOfWeek > 0 && dayOfWeek < 6) { // Monday to Friday
+            remainingBusinessDays++;
+        }
+        loopDate = addDays(loopDate, 1);
+    }
+    
+    const remainingValue = Math.max(0, target - current);
+    const dailyTarget = remainingBusinessDays > 0 ? remainingValue / remainingBusinessDays : 0;
+    // -- End New Logic --
+
+    personalStats.goal = {
+        target,
+        current,
+        progress: target > 0 ? (current / target) * 100 : 0,
+        dailyTarget: dailyTarget,
+        remainingDays: remainingBusinessDays,
+    };
+  }
+
+  // Group Goal
+  let groupGoal: SellerPerformanceData['groupGoal'] = null;
+  if (currentUser?.groupId) {
+      const groupGoalDoc = groupGoalsSnapshot.docs.find(doc => doc.data().groupId === currentUser.groupId);
+      if (groupGoalDoc) {
+          const groupGoalData = groupGoalDoc.data();
+          let currentGroupRevenue = 0;
+          allSellers
+              .filter(s => s.groupId === currentUser.groupId)
+              .forEach(member => {
+                  currentGroupRevenue += userRevenueForGoals.get(member.id) || 0;
+              });
+          
+          groupGoal = {
+              target: groupGoalData.targetValue,
+              current: currentGroupRevenue,
+              progress: groupGoalData.targetValue > 0 ? (currentGroupRevenue / groupGoalData.targetValue) * 100 : 0,
+          };
+      }
+  }
+
+  // Goal Champions Ranking
+  const goalChampionsRanking = allSellers
+    .filter(seller => userGoalsMap.has(seller.id))
+    .map(seller => {
+        const goalData = userGoalsMap.get(seller.id)!;
+        const currentRevenue = userRevenueForGoals.get(seller.id) || 0;
+        const progress = goalData.targetValue > 0 ? (currentRevenue / goalData.targetValue) * 100 : 0;
+        return {
+            sellerId: seller.id,
+            sellerName: seller.name,
+            goalProgress: progress,
+        };
+    })
+    .sort((a, b) => b.goalProgress - a.goalProgress);
+
   return {
     personalStats,
     generalRanking,
     groupRanking,
     groupName: currentUser?.groupId ? groupNameMap.get(currentUser.groupId) : undefined,
     period,
+    goalChampionsRanking,
+    groupGoal,
   };
 }
 
@@ -1141,6 +1281,7 @@ export async function getGroups(adminId: string): Promise<Group[]> {
   return groupsSnapshot.docs.map(doc => ({
     id: doc.id,
     name: doc.data().name,
+    slug: doc.data().slug,
     memberCount: groupCounts[doc.id] || 0,
   }));
 }
@@ -1148,6 +1289,19 @@ export async function getGroups(adminId: string): Promise<Group[]> {
 const groupNameSchema = z.object({
     name: z.string().min(2, "O nome do grupo deve ter pelo menos 2 caracteres.")
 });
+
+// Helper function to create a URL-friendly slug
+function createSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFD") // Decompose accented characters
+    .replace(/[\u0300-\u036f]/g, "") // Remove accent marks
+    .replace(/\s+/g, '-') // Replace spaces with -
+    .replace(/[^\w-]+/g, '') // Remove all non-word chars except -
+    .replace(/--+/g, '-') // Replace multiple - with single -
+    .replace(/^-+/, '') // Trim - from start of text
+    .replace(/-+$/, ''); // Trim - from end of text
+}
 
 export async function createGroup(name: string, adminId: string) {
   if (!db) return { success: false, error: "Firebase não configurado." };
@@ -1160,14 +1314,24 @@ export async function createGroup(name: string, adminId: string) {
     return { success: false, error: result.error.flatten().fieldErrors.name?.join(', ') };
   }
 
+  const slug = createSlug(result.data.name);
+
   try {
+    const groupsRef = collection(db, 'groups');
+    const q = query(groupsRef, where('slug', '==', slug), limit(1));
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      return { success: false, error: 'Um grupo com um nome similar já existe, o que criaria um link duplicado. Por favor, escolha um nome ligeiramente diferente.' };
+    }
+
     const docRef = await addDoc(collection(db, 'groups'), {
       name,
+      slug,
       adminId,
       createdAt: Timestamp.now(),
     });
     revalidatePath('/admin/dashboard');
-    return { success: true, group: { id: docRef.id, name } as Group };
+    return { success: true, group: { id: docRef.id, name, slug } as Group };
   } catch (e: any) {
     return { success: false, error: e.message || 'Erro ao criar grupo.' };
   }
@@ -1183,10 +1347,20 @@ export async function updateGroup(groupId: string, name: string, adminId: string
   if (!result.success) {
     return { success: false, error: result.error.flatten().fieldErrors.name?.join(', ') };
   }
+  
+  const slug = createSlug(result.data.name);
 
   try {
+    const groupsRef = collection(db, 'groups');
+    const q = query(groupsRef, where('slug', '==', slug), limit(1));
+    const snapshot = await getDocs(q);
+    const conflictingGroup = snapshot.docs.find(doc => doc.id !== groupId);
+    if (conflictingGroup) {
+        return { success: false, error: 'Um grupo com um nome similar já existe, o que criaria um link duplicado. Por favor, escolha um nome ligeiramente diferente.' };
+    }
+
     const groupDocRef = doc(db, 'groups', groupId);
-    await updateDoc(groupDocRef, { name });
+    await updateDoc(groupDocRef, { name, slug });
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (e: any) {
@@ -1384,39 +1558,39 @@ export async function getMessageTemplates(userId: string): Promise<MessageTempla
 }
 
 export async function createMessageTemplate(data: unknown, adminId: string) {
-  if (!db) return { success: false, error: "Firebase não configurado." };
-  if (!await isAdmin(adminId)) {
-    return { success: false, error: 'Acesso negado.' };
-  }
-
-  const result = templateFormSchema.safeParse(data);
-  if (!result.success) {
-    const fieldErrors = result.error.flatten().fieldErrors;
-    return { success: false, error: fieldErrors.title?.[0] || fieldErrors.content?.[0] || "Erro de validação." };
-  }
+    if (!db) return { success: false, error: "Firebase não configurado." };
+    if (!await isAdmin(adminId)) {
+      return { success: false, error: 'Acesso negado.' };
+    }
   
-  try {
-    const now = Timestamp.now();
-    const docRef = await addDoc(collection(db, 'messageTemplates'), {
-      ...result.data,
-      adminId,
-      createdAt: now,
-    });
-    revalidatePath('/admin/dashboard');
-
-    const createdTemplate: MessageTemplate = {
-      id: docRef.id,
-      title: result.data.title,
-      content: result.data.content,
-      adminId,
-      createdAt: now.toDate().toISOString(),
-    };
-
-    return { success: true, template: createdTemplate };
-  } catch (e: any) {
-    return { success: false, error: e.message || 'Erro ao criar template.' };
+    const result = templateFormSchema.safeParse(data);
+    if (!result.success) {
+      const fieldErrors = result.error.flatten().fieldErrors;
+      return { success: false, error: fieldErrors.title?.[0] || fieldErrors.content?.[0] || "Erro de validação." };
+    }
+    
+    try {
+      const now = Timestamp.now();
+      const docRef = await addDoc(collection(db, 'messageTemplates'), {
+        ...result.data,
+        adminId,
+        createdAt: now,
+      });
+      revalidatePath('/admin/dashboard');
+  
+      const createdTemplate: MessageTemplate = {
+        id: docRef.id,
+        title: result.data.title,
+        content: result.data.content,
+        adminId,
+        createdAt: now.toDate().toISOString(),
+      };
+  
+      return { success: true, template: createdTemplate };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Erro ao criar template.' };
+    }
   }
-}
 
 export async function updateMessageTemplate(templateId: string, data: unknown, adminId: string) {
   if (!db) return { success: false, error: "Firebase não está configurado." };
@@ -1452,5 +1626,335 @@ export async function deleteMessageTemplate(templateId: string, adminId: string)
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message || "Erro ao deletar template." };
+  }
+}
+
+// ======== Goals (Metas) Actions ========
+
+export async function getGoals(adminId: string, period: string): Promise<Goal[]> {
+    if (!db) throw new Error('Firebase não está configurado.');
+    if (!await isAdmin(adminId)) throw new Error('Acesso negado.');
+
+    const [groupsSnapshot, usersSnapshot, salesSnapshot] = await Promise.all([
+      getDocs(collection(db, 'groups')),
+      getDocs(collection(db, 'users')),
+      getDocs(collection(db, 'sales'))
+    ]);
+    const groupMap = new Map(groupsSnapshot.docs.map(doc => [doc.id, doc.data().name]));
+    const userMap = new Map(usersSnapshot.docs.map(doc => [doc.id, doc.data() as UserProfile]));
+
+    const [year, month] = period.split('-').map(Number);
+    const startDate = startOfMonth(new Date(year, month - 1, 1));
+    const endDate = endOfMonth(startDate);
+
+    const salesInPeriod = salesSnapshot.docs
+        .map(doc => {
+            const data = doc.data();
+            return {
+                ...data,
+                saleDate: (data.saleDate as Timestamp).toDate()
+            };
+        })
+        .filter(sale => isWithinInterval(sale.saleDate, { start: startDate, end: endDate }));
+    
+    const userSalesMap = new Map<string, number>();
+    salesInPeriod.forEach(sale => {
+        const currentSales = userSalesMap.get(sale.userId) || 0;
+        userSalesMap.set(sale.userId, currentSales + sale.saleValue);
+    });
+
+    const goalsRef = collection(db, 'goals');
+    const goalsQuery = query(goalsRef, where('adminId', '==', adminId), where('period', '==', period));
+    const goalsSnapshot = await getDocs(goalsQuery);
+
+    const goals: Goal[] = [];
+    for (const goalDoc of goalsSnapshot.docs) {
+        const goalData = goalDoc.data();
+        const userGoalsRef = collection(db, 'userGoals');
+        const userGoalsQuery = query(userGoalsRef, where('goalId', '==', goalDoc.id));
+        const userGoalsSnapshot = await getDocs(userGoalsQuery);
+        
+        let totalCurrentValue = 0;
+        const userGoals: UserGoal[] = userGoalsSnapshot.docs.map(ugDoc => {
+            const ugData = ugDoc.data();
+            const currentUser = userMap.get(ugData.userId);
+            const currentValue = userSalesMap.get(ugData.userId) || 0;
+            totalCurrentValue += currentValue;
+            
+            return {
+                id: ugDoc.id,
+                userId: ugData.userId,
+                userName: currentUser?.name || 'Vendedor Deletado',
+                goalId: ugData.goalId,
+                targetValue: ugData.targetValue,
+                currentValue,
+                period: ugData.period,
+            };
+        });
+
+        goals.push({
+            id: goalDoc.id,
+            groupId: goalData.groupId,
+            groupName: groupMap.get(goalData.groupId) || 'Grupo Deletado',
+            targetValue: goalData.targetValue,
+            currentValue: totalCurrentValue,
+            period: goalData.period,
+            userGoals,
+        });
+    }
+    
+    return goals.sort((a,b) => a.groupName.localeCompare(b.groupName));
+}
+
+export async function createOrUpdateGroupGoal(data: { groupId: string; targetValue: number; period: string }, adminId: string) {
+    if (!db) return { success: false, error: 'Firebase não está configurado.' };
+    if (!await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+
+    const { groupId, targetValue, period } = data;
+    if (targetValue <= 0) return { success: false, error: 'O valor da meta deve ser positivo.' };
+
+    const usersRef = collection(db, 'users');
+    const groupUsersQuery = query(usersRef, where('groupId', '==', groupId));
+    const groupUsersSnapshot = await getDocs(groupUsersQuery);
+    const groupUsers = groupUsersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as UserProfile }));
+
+    if (groupUsers.length === 0) {
+        return { success: false, error: 'Este grupo não tem vendedores para definir uma meta.' };
+    }
+
+    const individualTarget = Math.floor((targetValue / groupUsers.length) * 100) / 100;
+
+    const goalsRef = collection(db, 'goals');
+    const existingGoalQuery = query(goalsRef, where('groupId', '==', groupId), where('period', '==', period), limit(1));
+    const existingGoalSnapshot = await getDocs(existingGoalQuery);
+
+    const batch = writeBatch(db);
+    let goalId: string;
+    const now = Timestamp.now();
+
+    if (existingGoalSnapshot.empty) {
+        const newGoalRef = doc(goalsRef);
+        goalId = newGoalRef.id;
+        batch.set(newGoalRef, { adminId, groupId, targetValue, period, createdAt: now });
+    } else {
+        const existingGoalRef = existingGoalSnapshot.docs[0].ref;
+        goalId = existingGoalRef.id;
+        batch.update(existingGoalRef, { targetValue });
+    }
+
+    const userGoalsRef = collection(db, 'userGoals');
+    for (const user of groupUsers) {
+        const userGoalQuery = query(userGoalsRef, where('goalId', '==', goalId), where('userId', '==', user.id), limit(1));
+        const userGoalSnapshot = await getDocs(userGoalQuery);
+        
+        if (userGoalSnapshot.empty) {
+            const newUserGoalRef = doc(userGoalsRef);
+            batch.set(newUserGoalRef, { goalId, userId: user.id, period, targetValue: individualTarget, createdAt: now });
+        } else {
+            // Se a meta do grupo for atualizada, redistribui o valor igualmente.
+            // A edição individual será uma ação separada.
+            batch.update(userGoalSnapshot.docs[0].ref, { targetValue: individualTarget });
+        }
+    }
+
+    try {
+        await batch.commit();
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao salvar meta do grupo.' };
+    }
+}
+
+export async function updateIndividualGoal(userGoalId: string, newTargetValue: number, adminId: string) {
+    if (!db) return { success: false, error: 'Firebase não está configurado.' };
+    if (!await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+
+    if (typeof newTargetValue !== 'number' || newTargetValue < 0) {
+        return { success: false, error: 'O valor da meta individual é inválido.' };
+    }
+
+    try {
+        const userGoalRef = doc(db, 'userGoals', userGoalId);
+        await updateDoc(userGoalRef, { targetValue: newTargetValue });
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao atualizar meta individual.' };
+    }
+}
+
+export async function deleteGoal(goalId: string, adminId: string) {
+    if (!db) return { success: false, error: 'Firebase não está configurado.' };
+    if (!await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+
+    try {
+        const batch = writeBatch(db);
+        const goalRef = doc(db, 'goals', goalId);
+        batch.delete(goalRef);
+
+        const userGoalsQuery = query(collectionGroup(db, 'userGoals'), where('goalId', '==', goalId));
+        const userGoalsSnapshot = await getDocs(userGoalsQuery);
+        userGoalsSnapshot.forEach(doc => batch.delete(doc.ref));
+
+        await batch.commit();
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao deletar meta.' };
+    }
+}
+
+
+// ======== Lead Capture Actions ========
+
+export async function getGroupInfoBySlug(slug: string): Promise<Group | null> {
+    if (!db) throw new Error("Firebase não está configurado.");
+    const groupsRef = collection(db, 'groups');
+    const q = query(groupsRef, where('slug', '==', slug), limit(1));
+    const groupSnapshot = await getDocs(q);
+    if (groupSnapshot.empty) return null;
+    const groupDoc = groupSnapshot.docs[0];
+    return { id: groupDoc.id, ...groupDoc.data() } as Group;
+}
+
+export async function captureLead(data: unknown, groupId: string) {
+  if (!db) {
+    return { success: false, error: "Firebase não está configurado." };
+  }
+  const result = captureLeadSchema.safeParse(data);
+  if (!result.success) {
+    return { success: false, error: result.error.flatten().fieldErrors };
+  }
+  
+  const { name, city, contact, desiredProduct, referredBy } = result.data;
+  const normalizedContact = contact.replace(/\D/g, '');
+
+  const clientsRef = collection(db, 'clients');
+  const q = query(clientsRef, where('normalizedContact', '==', normalizedContact), limit(1));
+  const querySnapshot = await getDocs(q);
+
+  if (!querySnapshot.empty) {
+    return { success: false, error: { contact: ["Este número de contato já está registrado."] } };
+  }
+
+  const groupDocRef = doc(db, 'groups', groupId);
+  const groupDoc = await getDoc(groupDocRef);
+  if (!groupDoc.exists()) {
+    return { success: false, error: { form: ["Grupo de captação inválido."] } };
+  }
+  const groupName = groupDoc.data().name;
+
+  try {
+    const batch = writeBatch(db);
+    const newClientRef = doc(clientsRef);
+    const now = Timestamp.now();
+    
+    const newClientData = {
+      name,
+      city,
+      contact,
+      normalizedContact,
+      desiredProduct,
+      referredBy: referredBy || '',
+      status: 'Novo Lead' as ClientStatus,
+      lastProductBought: '',
+      remarketingReminder: '',
+      userId: null,
+      groupId: groupId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    batch.set(newClientRef, newClientData);
+
+    const commentText = `Lead capturado pela página do grupo "${groupName}".${referredBy ? ` Indicado por: ${referredBy}.` : ''}`;
+    const commentsRef = collection(db, 'clients', newClientRef.id, 'comments');
+    batch.set(doc(commentsRef), {
+      text: commentText,
+      userId: 'system',
+      createdAt: now,
+      isSystemMessage: true,
+    });
+    
+    await batch.commit();
+    revalidatePath('/');
+    return { success: true };
+
+  } catch (e: any) {
+    return { success: false, error: { form: [e.message || 'Erro ao registrar lead.'] } };
+  }
+}
+
+export async function getUnclaimedLeads(groupId: string): Promise<Client[]> {
+  if (!groupId) return [];
+  if (!db) throw new Error("Firebase não está configurado.");
+
+  const clientsRef = collection(db, 'clients');
+  // Query only by group to avoid needing a complex composite index.
+  // Filtering and sorting for unclaimed leads will be done in the code.
+  const q = query(clientsRef, where('groupId', '==', groupId));
+  const querySnapshot = await getDocs(q);
+
+  const allGroupClients = querySnapshot.docs.map(doc => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      ...data,
+      createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+      updatedAt: data.updatedAt ? (data.updatedAt as Timestamp).toDate().toISOString() : undefined,
+    } as Client;
+  });
+
+  // Filter for unclaimed leads (where userId is null) and sort them
+  const unclaimedLeads = allGroupClients
+    .filter(client => client.userId === null)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return unclaimedLeads;
+}
+
+export async function claimLead(clientId: string, userId: string, userName: string) {
+  if (!userId) return { success: false, error: 'Usuário não autenticado.' };
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+  
+  const clientDocRef = doc(db, 'clients', clientId);
+  
+  try {
+    const clientDoc = await getDoc(clientDocRef);
+    if (!clientDoc.exists() || clientDoc.data()?.userId !== null) {
+      return { success: false, error: 'Este lead já foi pego ou não existe mais.' };
+    }
+
+    const batch = writeBatch(db);
+    const now = Timestamp.now();
+
+    batch.update(clientDocRef, { 
+      userId: userId,
+      updatedAt: now,
+    });
+
+    const commentText = `Lead pego por ${userName}.`;
+    const commentsRef = collection(db, 'clients', clientId, 'comments');
+    batch.set(doc(commentsRef), {
+      text: commentText,
+      userId: 'system',
+      createdAt: now,
+      isSystemMessage: true,
+    });
+    
+    await batch.commit();
+
+    const updatedDoc = await getDoc(clientDocRef);
+    const updatedClient = {
+      id: updatedDoc.id,
+      ...updatedDoc.data(),
+      createdAt: (updatedDoc.data()?.createdAt as Timestamp).toDate().toISOString(),
+      updatedAt: (updatedDoc.data()?.updatedAt as Timestamp).toDate().toISOString(),
+    } as Client
+
+    revalidatePath('/');
+    return { success: true, client: updatedClient };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao pegar o lead.' };
   }
 }

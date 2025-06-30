@@ -14,10 +14,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare } from 'lucide-react';
+import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, createMessageTemplate, deleteMessageTemplate } from '@/app/actions';
-import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate } from '@/lib/types';
+import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal } from '@/app/actions';
+import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -63,7 +63,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from '@/components/ui/badge';
-import { format } from 'date-fns';
+import { format, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
@@ -163,6 +163,15 @@ export default function AdminDashboardPage() {
   const [overviewGroupFilter, setOverviewGroupFilter] = useState<string>('all');
   const [overviewPeriod, setOverviewPeriod] = useState<'weekly' | 'monthly' | 'yearly'>('weekly');
 
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [isLoadingGoals, setIsLoadingGoals] = useState(true);
+  const [goalsError, setGoalsError] = useState<string | null>(null);
+  const [goalPeriod, setGoalPeriod] = useState<string>(format(new Date(), 'yyyy-MM'));
+  const [newGoalGroupId, setNewGoalGroupId] = useState<string>('');
+  const [newGoalValue, setNewGoalValue] = useState('');
+  const [goalToDelete, setGoalToDelete] = useState<Goal | null>(null);
+  const [individualGoalValues, setIndividualGoalValues] = useState<Record<string, string>>({});
+
 
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [isEditUserOpen, setIsEditUserOpen] = useState(false);
@@ -258,6 +267,19 @@ export default function AdminDashboardPage() {
       .finally(() => setIsLoadingTemplates(false));
   };
 
+  const fetchGoals = () => {
+    if (!user) return;
+    setIsLoadingGoals(true);
+    setGoalsError(null);
+    getGoals(user.uid, goalPeriod)
+        .then(setGoals)
+        .catch(err => {
+            setGoalsError(err.message || 'Ocorreu um erro ao buscar as metas.');
+            toast({ variant: 'destructive', title: 'Erro de Metas', description: 'Não foi possível carregar as metas.' });
+        })
+        .finally(() => setIsLoadingGoals(false));
+  };
+
   useEffect(() => {
     if (user?.uid) {
         fetchGroups();
@@ -287,6 +309,13 @@ export default function AdminDashboardPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, analyticsPeriod, groupFilter]);
+
+  useEffect(() => {
+    if(user?.uid) {
+      fetchGoals();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, goalPeriod]);
 
 
   const handleLogout = async () => {
@@ -320,6 +349,7 @@ export default function AdminDashboardPage() {
     fetchDashboardAnalytics();
     fetchSellerAnalytics();
     fetchTemplates();
+    fetchGoals();
   };
   
   const handleSendPasswordReset = (email: string) => {
@@ -405,6 +435,93 @@ export default function AdminDashboardPage() {
         }
         setTemplateToDelete(null);
     });
+  };
+
+  const handleSaveGoal = () => {
+    if (!user || !newGoalGroupId || !newGoalValue) {
+        toast({ variant: "destructive", title: "Erro", description: "Selecione um grupo e um valor para a meta." });
+        return;
+    }
+    startTransition(async () => {
+        const result = await createOrUpdateGroupGoal({
+            groupId: newGoalGroupId,
+            targetValue: parseFloat(newGoalValue),
+            period: goalPeriod
+        }, user.uid);
+
+        if (result.success) {
+            toast({ title: "Sucesso!", description: "Meta do grupo salva com sucesso." });
+            setNewGoalGroupId('');
+            setNewGoalValue('');
+            fetchGoals();
+        } else {
+            toast({ variant: "destructive", title: "Erro ao Salvar Meta", description: result.error });
+        }
+    });
+  };
+
+  const handleSaveIndividualGoal = (userGoalId: string) => {
+    if (!user) return;
+    const newValue = parseFloat(individualGoalValues[userGoalId]);
+    if (isNaN(newValue) || newValue < 0) {
+        toast({ variant: "destructive", title: "Erro", description: "Valor da meta individual inválido." });
+        return;
+    }
+    startTransition(async () => {
+        const result = await updateIndividualGoal(userGoalId, newValue, user.uid);
+        if (result.success) {
+            toast({ title: "Sucesso!", description: "Meta individual atualizada." });
+            fetchGoals();
+        } else {
+            toast({ variant: "destructive", title: "Erro", description: result.error });
+        }
+    });
+  };
+
+  const handleDeleteGoal = () => {
+    if (!goalToDelete || !user) return;
+    startTransition(async () => {
+        const result = await deleteGoal(goalToDelete.id, user.uid);
+        if (result.success) {
+            toast({ title: 'Sucesso!', description: `Meta do grupo "${goalToDelete.groupName}" deletada.` });
+            fetchGoals();
+        } else {
+            toast({ variant: 'destructive', title: 'Erro', description: result.error });
+        }
+        setGoalToDelete(null);
+    });
+  };
+
+  const generateGoalPeriodOptions = () => {
+    const options = [];
+    let currentDate = new Date();
+    for (let i = 0; i < 12; i++) {
+        const value = format(currentDate, 'yyyy-MM');
+        const label = format(currentDate, 'MMMM yyyy', { locale: ptBR });
+        options.push({ value, label: label.charAt(0).toUpperCase() + label.slice(1) });
+        currentDate = subMonths(currentDate, 1);
+    }
+    return options;
+  };
+  
+  const handleCopyLink = (group: Group) => {
+    if (!group.slug) {
+        toast({
+            variant: "destructive",
+            title: "Link Indisponível",
+            description: "Este grupo antigo não possui um link de captação. Edite o nome do grupo para gerar um novo link e salvá-lo.",
+        });
+        return;
+    }
+    const link = `${window.location.origin}/${group.slug}`;
+    navigator.clipboard.writeText(link)
+      .then(() => {
+        toast({ title: "Link Copiado!", description: "O link de captação foi copiado para sua área de transferência." });
+      })
+      .catch(err => {
+        toast({ variant: "destructive", title: "Erro ao Copiar", description: "Não foi possível copiar o link." });
+        console.error('Could not copy text: ', err);
+      });
   };
 
   const renderUsersContent = () => {
@@ -549,18 +666,19 @@ export default function AdminDashboardPage() {
             <AccordionTrigger className="hover:no-underline font-medium text-base">
                <div className="flex justify-between items-center w-full pr-4">
                 <span>{seller.sellerName}</span>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground font-normal">
+                <div className="flex items-center flex-wrap justify-end gap-x-4 gap-y-1 text-sm text-muted-foreground font-normal">
                   <span>Receita: <span className="font-semibold text-foreground">{seller.totalRevenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL'})}</span></span>
                   <span>Vendas: <span className="font-semibold text-foreground">{seller.totalSales}</span></span>
                   <span>Recompras: <span className="font-semibold text-foreground">{seller.totalRepurchases}</span></span>
                   <span>Conversão: <span className="font-semibold text-foreground">{seller.conversionRate.toFixed(1)}%</span></span>
+                  <span>Deletados: <span className="font-semibold text-foreground">{seller.totalDeletedLeads}</span></span>
                 </div>
               </div>
             </AccordionTrigger>
             <AccordionContent className="p-1">
               <Card>
                 <CardContent className="p-4 space-y-6">
-                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                       <div className="space-y-4">
                           <h4 className="font-medium">Resumo de Leads</h4>
                           <div className="space-y-2">
@@ -588,6 +706,15 @@ export default function AdminDashboardPage() {
                             Baseado nos leads e vendas do período.
                          </p>
                          <Progress value={seller.conversionRate} className="h-2" />
+                      </div>
+                      <div className="space-y-4">
+                        <h4 className="font-medium flex items-center gap-2"><Trash2 className="h-4 w-4" /> Leads Deletados</h4>
+                        <div className="flex items-end gap-2">
+                            <p className="text-3xl font-bold">{seller.totalDeletedLeads}</p>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            Total de leads removidos da carteira (desde o início do rastreamento).
+                        </p>
                       </div>
                   </div>
                   <div className="space-y-2 pt-4 border-t">
@@ -656,7 +783,7 @@ export default function AdminDashboardPage() {
             <Card>
                 <CardHeader>
                     <CardTitle>Grupos Existentes</CardTitle>
-                    <CardDescription>Gerencie os grupos de vendedores já criados.</CardDescription>
+                    <CardDescription>Gerencie os grupos de vendedores e copie os links de captação.</CardDescription>
                 </CardHeader>
                 <CardContent>
                     {isLoadingGroups ? <Skeleton className="h-20 w-full" /> : 
@@ -667,6 +794,7 @@ export default function AdminDashboardPage() {
                                 <TableRow>
                                     <TableHead>Nome</TableHead>
                                     <TableHead>Membros</TableHead>
+                                    <TableHead>Link de Captura</TableHead>
                                     <TableHead className="text-right">Ações</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -676,6 +804,12 @@ export default function AdminDashboardPage() {
                                         <TableCell className="font-medium">{group.name}</TableCell>
                                         <TableCell>
                                           <Badge variant="secondary">{group.memberCount || 0}</Badge>
+                                        </TableCell>
+                                        <TableCell>
+                                          <Button variant="outline" size="sm" onClick={() => handleCopyLink(group)}>
+                                            <Link2 className="mr-2 h-4 w-4" />
+                                            Copiar Link
+                                          </Button>
                                         </TableCell>
                                         <TableCell className="text-right">
                                              <Button variant="ghost" size="icon" onClick={() => handleOpenGroupEdit(group)} disabled={isPending}>
@@ -758,6 +892,138 @@ export default function AdminDashboardPage() {
       </Card>
     );
   };
+  
+  const renderGoalsManagementContent = () => {
+    return (
+        <div className="space-y-8">
+            <div className="flex justify-end">
+                <Select value={goalPeriod} onValueChange={setGoalPeriod}>
+                    <SelectTrigger className="w-full sm:w-[220px]">
+                        <SelectValue placeholder="Selecionar Período" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {generateGoalPeriodOptions().map(option => (
+                            <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </div>
+            
+            <Card>
+                <CardHeader>
+                    <CardTitle>Definir Nova Meta de Grupo</CardTitle>
+                    <CardDescription>Defina uma meta de vendas para um grupo para o período de {format(new Date(`${goalPeriod}-02`), 'MMMM yyyy', { locale: ptBR })}.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <Select value={newGoalGroupId} onValueChange={setNewGoalGroupId}>
+                        <SelectTrigger>
+                            <SelectValue placeholder="Selecione um grupo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {groups.map(group => (
+                                <SelectItem key={group.id} value={group.id}>
+                                    {group.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <Input 
+                        type="number"
+                        placeholder="Valor da Meta (Ex: 50000)"
+                        value={newGoalValue}
+                        onChange={e => setNewGoalValue(e.target.value)}
+                        disabled={isPending}
+                    />
+                    <Button onClick={handleSaveGoal} disabled={isPending || !newGoalGroupId || !newGoalValue}>
+                        Salvar Meta
+                    </Button>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Metas do Período</CardTitle>
+                    <CardDescription>Acompanhe e edite as metas definidas para {format(new Date(`${goalPeriod}-02`), 'MMMM yyyy', { locale: ptBR })}.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    {isLoadingGoals ? <Skeleton className="h-40 w-full" /> : 
+                     goalsError ? <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Erro</AlertTitle><AlertDescription>{goalsError}</AlertDescription></Alert> :
+                     goals.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">Nenhuma meta definida para este período.</p> : (
+                        <Accordion type="multiple" className="w-full space-y-4">
+                            {goals.map(goal => {
+                                const progress = goal.targetValue > 0 ? (goal.currentValue / goal.targetValue) * 100 : 0;
+                                return (
+                                    <AccordionItem value={goal.id} key={goal.id} className="border rounded-lg bg-card text-card-foreground shadow-sm">
+                                        <AccordionTrigger className="p-4 hover:no-underline font-medium text-base">
+                                            <div className="flex justify-between items-center w-full pr-4">
+                                                <div className="flex items-center gap-3">
+                                                    <GoalIcon className="h-5 w-5 text-primary"/>
+                                                    <span>{goal.groupName}</span>
+                                                </div>
+                                                <div className="flex flex-col items-end gap-1 text-sm text-muted-foreground font-normal">
+                                                    <span>{goal.currentValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL'})} / <span className="font-semibold text-foreground">{goal.targetValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL'})}</span></span>
+                                                    <Progress value={progress} className="w-32 h-2" />
+                                                </div>
+                                            </div>
+                                        </AccordionTrigger>
+                                        <AccordionContent className="p-1 px-4 pb-4">
+                                            <div className="flex justify-end mb-2">
+                                                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setGoalToDelete(goal)}>
+                                                    <Trash2 className="mr-2 h-4 w-4" /> Deletar Meta do Grupo
+                                                </Button>
+                                            </div>
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead>Vendedor</TableHead>
+                                                        <TableHead>Meta Individual</TableHead>
+                                                        <TableHead>Progresso</TableHead>
+                                                        <TableHead className="text-right">Ação</TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {goal.userGoals.map(userGoal => {
+                                                        const userProgress = userGoal.targetValue > 0 ? (userGoal.currentValue / userGoal.targetValue) * 100 : 0;
+                                                        return (
+                                                            <TableRow key={userGoal.id}>
+                                                                <TableCell>{userGoal.userName}</TableCell>
+                                                                <TableCell>
+                                                                    <Input 
+                                                                        type="number"
+                                                                        className="w-40"
+                                                                        value={individualGoalValues[userGoal.id] ?? userGoal.targetValue}
+                                                                        onChange={e => setIndividualGoalValues(prev => ({...prev, [userGoal.id]: e.target.value}))}
+                                                                        disabled={isPending}
+                                                                    />
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <Progress value={userProgress} className="w-24 h-2" />
+                                                                        <span className="text-xs text-muted-foreground">{userProgress.toFixed(1)}%</span>
+                                                                    </div>
+                                                                    <span className="text-xs text-muted-foreground">{userGoal.currentValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL'})}</span>
+                                                                </TableCell>
+                                                                <TableCell className="text-right">
+                                                                    <Button size="sm" onClick={() => handleSaveIndividualGoal(userGoal.id)} disabled={isPending}>Salvar</Button>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        )
+                                                    })}
+                                                </TableBody>
+                                            </Table>
+                                        </AccordionContent>
+                                    </AccordionItem>
+                                )
+                            })}
+                        </Accordion>
+                     )}
+                </CardContent>
+            </Card>
+        </div>
+    );
+  };
 
 
   return (
@@ -787,7 +1053,8 @@ export default function AdminDashboardPage() {
                 <TabsTrigger value="overview">Visão Geral e Usuários</TabsTrigger>
                 <TabsTrigger value="seller-data">Dados por Vendedor</TabsTrigger>
                 <TabsTrigger value="groups">Gerenciamento de Grupos</TabsTrigger>
-                 <TabsTrigger value="templates">Templates de Mensagem</TabsTrigger>
+                <TabsTrigger value="templates">Templates de Mensagem</TabsTrigger>
+                <TabsTrigger value="goals">Metas</TabsTrigger>
               </TabsList>
               
               <TabsContent value="overview" className="space-y-8">
@@ -1042,6 +1309,10 @@ export default function AdminDashboardPage() {
                 {renderTemplateManagementContent()}
               </TabsContent>
 
+              <TabsContent value="goals">
+                {renderGoalsManagementContent()}
+              </TabsContent>
+
             </Tabs>
         </main>
       </div>
@@ -1136,6 +1407,26 @@ export default function AdminDashboardPage() {
                 className="bg-destructive hover:bg-destructive/90"
                 disabled={isPending}>
                 {isPending ? "Deletando..." : "Sim, deletar"}
+            </AlertDialogAction>
+            </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!goalToDelete} onOpenChange={(open) => !open && setGoalToDelete(null)}>
+        <AlertDialogContent>
+            <AlertDialogHeader>
+            <AlertDialogTitle>Deletar a meta de "{goalToDelete?.groupName}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+                Esta ação não pode ser desfeita e irá remover a meta do grupo e de todos os seus membros para este período.
+            </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setGoalToDelete(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction 
+                onClick={handleDeleteGoal} 
+                className="bg-destructive hover:bg-destructive/90"
+                disabled={isPending}>
+                {isPending ? "Deletando..." : "Sim, deletar meta"}
             </AlertDialogAction>
             </AlertDialogFooter>
         </AlertDialogContent>

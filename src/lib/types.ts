@@ -1,5 +1,4 @@
 
-
 export const productCategories = ['Eletrodomésticos', 'TV e AV', 'Telefonia', 'Informática', 'Outros'] as const;
 export type ProductCategory = (typeof productCategories)[number];
 
@@ -28,7 +27,9 @@ export interface Client {
   remarketingReminder: string;
   createdAt: string;
   updatedAt?: string;
-  userId: string;
+  userId: string | null;
+  groupId?: string;
+  referredBy?: string;
 }
 
 export interface RecentSale {
@@ -51,6 +52,7 @@ export interface Comment {
 export interface Group {
     id: string;
     name: string;
+    slug?: string;
     memberCount?: number;
 }
 
@@ -71,6 +73,27 @@ export interface MessageTemplate {
   adminId: string;
   createdAt: string;
 }
+
+export interface Goal {
+  id: string;
+  groupId: string;
+  groupName: string;
+  targetValue: number;
+  currentValue: number;
+  period: string; // YYYY-MM
+  userGoals: UserGoal[];
+}
+
+export interface UserGoal {
+  id: string;
+  userId: string;
+  userName: string;
+  goalId: string;
+  targetValue: number;
+  currentValue: number;
+  period: string; // YYYY-MM
+}
+
 
 export interface DashboardAnalyticsData {
   sales: {
@@ -113,6 +136,7 @@ export interface SellerAnalytics {
   totalRevenue: number;
   totalRepurchases: number;
   conversionRate: number;
+  totalDeletedLeads: number;
   performanceOverTime: {
     date: string;
     leads: number;
@@ -126,6 +150,13 @@ export interface SellerPerformanceData {
     sales: { count: number; change: number };
     revenue: { total: number; change: number };
     conversionRate: { rate: number; change: number };
+    goal: {
+        target: number;
+        current: number;
+        progress: number;
+        dailyTarget: number;
+        remainingDays: number;
+    } | null;
   };
   generalRanking: {
     sellerId: string;
@@ -139,6 +170,16 @@ export interface SellerPerformanceData {
     totalSales: number;
     totalRevenue: number;
   }[] | null;
+  goalChampionsRanking: {
+      sellerId: string;
+      sellerName: string;
+      goalProgress: number;
+  }[];
+  groupGoal: {
+      target: number;
+      current: number;
+      progress: number;
+  } | null;
   groupName?: string;
   period: 'yearly' | 'monthly' | 'weekly';
 }

@@ -58,9 +58,12 @@ import {
   Clock,
   LayoutGrid,
   BarChart2,
+  Users,
+  Hand,
+  Loader2,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates } from '@/app/actions';
+import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead } from '@/app/actions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -86,12 +89,15 @@ import { SaleValueDialog } from './sale-value-dialog';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { SellerPerformanceView } from './seller-performance-view';
+import { Badge } from './ui/badge';
 
 
 export function ClientsView() {
-  const { user } = useAuth();
+  const { user, userProfile } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
+  const [unclaimedLeads, setUnclaimedLeads] = useState<Client[]>([]);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
+  const [isLoadingUnclaimed, setIsLoadingUnclaimed] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ClientStatus | 'all'>('all');
   const [productFilter, setProductFilter] = useState<ProductCategory | 'all'>('all');
@@ -113,6 +119,7 @@ export function ClientsView() {
   const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>([]);
 
   const [isPending, startTransition] = useTransition();
+  const [isClaiming, startClaimingTransition] = useTransition();
   const { toast } = useToast();
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -143,13 +150,27 @@ export function ClientsView() {
       });
     }
   }, [user?.uid, toast]);
+  
+  const fetchGroupLeads = useCallback(() => {
+    if (userProfile?.groupId) {
+        setIsLoadingUnclaimed(true);
+        getUnclaimedLeads(userProfile.groupId)
+            .then(setUnclaimedLeads)
+            .catch(() => toast({ variant: "destructive", title: "Erro", description: "Não foi possível buscar os leads do grupo." }))
+            .finally(() => setIsLoadingUnclaimed(false));
+    }
+  }, [userProfile?.groupId, toast]);
 
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData]);
 
   useEffect(() => {
-    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
+    fetchGroupLeads();
+  }, [fetchGroupLeads]);
+
+  useEffect(() => {
+    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
     audio.preload = 'auto';
     audioRef.current = audio;
   }, []);
@@ -222,6 +243,21 @@ export function ClientsView() {
             }
         });
     }
+  };
+  
+  const handleClaimLead = (clientId: string) => {
+    if (!user || !userProfile) return;
+    startClaimingTransition(async () => {
+        const result = await claimLead(clientId, user.uid, userProfile.name);
+        if (result.success && result.client) {
+            toast({ title: "Lead pego com sucesso!" });
+            setUnclaimedLeads(prev => prev.filter(lead => lead.id !== clientId));
+            setClients(prev => [result.client!, ...prev]);
+        } else {
+            toast({ variant: "destructive", title: "Erro ao pegar lead", description: result.error });
+            fetchGroupLeads(); // Refetch to get the latest state
+        }
+    });
   };
 
   const handleConfirmSale = (saleValue: number) => {
@@ -369,10 +405,23 @@ export function ClientsView() {
 
       <main className="flex-1 container mx-auto p-4 sm:p-6 lg:p-8">
         <Tabs defaultValue="clientes" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 max-w-md mx-auto mb-6">
+            <TabsList className="grid w-full grid-cols-3 max-w-lg mx-auto mb-6">
                 <TabsTrigger value="clientes">
                     <LayoutGrid className="mr-2 h-4 w-4" />
                     Meus Clientes
+                    <Badge variant="secondary" className="ml-2 rounded-full">{filteredClients.length}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="grupo" disabled={!userProfile?.groupId}>
+                    <Users className="mr-2 h-4 w-4" />
+                    Leads do Grupo
+                    {userProfile?.groupId && (
+                        <Badge
+                            variant={unclaimedLeads.length > 0 ? 'default' : 'secondary'}
+                            className="ml-2 rounded-full"
+                        >
+                            {unclaimedLeads.length}
+                        </Badge>
+                    )}
                 </TabsTrigger>
                 <TabsTrigger value="resultados">
                     <BarChart2 className="mr-2 h-4 w-4" />
@@ -680,6 +729,56 @@ export function ClientsView() {
                         </div>
                     </>
                 )}
+            </TabsContent>
+
+            <TabsContent value="grupo">
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Leads do Grupo</CardTitle>
+                        <CardDescription>
+                            {userProfile?.groupId 
+                                ? "Leads capturados pela página do seu grupo. Pegue um lead para começar a trabalhar com ele."
+                                : "Você não está em um grupo. Peça ao administrador para te adicionar a um."
+                            }
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        {isLoadingUnclaimed ? <Skeleton className="h-32 w-full" /> : 
+                         !userProfile?.groupId ? null :
+                         unclaimedLeads.length === 0 ? <p className="text-center text-muted-foreground p-8">Nenhum lead disponível para o grupo no momento.</p> : (
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Nome</TableHead>
+                                        <TableHead>Cidade</TableHead>
+                                        <TableHead>Produto Desejado</TableHead>
+                                        <TableHead>Indicação</TableHead>
+                                        <TableHead>Capturado em</TableHead>
+                                        <TableHead className="text-right">Ação</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {unclaimedLeads.map((lead) => (
+                                        <TableRow key={lead.id}>
+                                            <TableCell className="font-medium">{lead.name}</TableCell>
+                                            <TableCell>{lead.city}</TableCell>
+                                            <TableCell>{lead.desiredProduct}</TableCell>
+                                            <TableCell>{lead.referredBy || "-"}</TableCell>
+                                            <TableCell>{formatDistanceToNow(new Date(lead.createdAt), { addSuffix: true, locale: ptBR })}</TableCell>
+                                            <TableCell className="text-right">
+                                                <Button size="sm" onClick={() => handleClaimLead(lead.id)} disabled={isClaiming}>
+                                                    {isClaiming ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Hand className="mr-2 h-4 w-4" />}
+                                                    Pegar Lead
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                         )
+                        }
+                    </CardContent>
+                </Card>
             </TabsContent>
 
             <TabsContent value="resultados">
