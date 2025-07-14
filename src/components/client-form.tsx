@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -31,11 +32,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Client, clientStatuses, productCategories } from "@/lib/types";
+import { Client, clientStatuses, productCategories, Tag } from "@/lib/types";
 import { addClient, updateClient, checkContactExists } from "@/app/actions";
-import { useTransition, useEffect, useState } from "react";
+import { useTransition, useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/context/auth-context";
-import { Loader2 } from "lucide-react";
+import { Loader2, X, Check } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 const formSchema = z.object({
   name: z.string().min(2, "O nome deve ter pelo menos 2 caracteres."),
@@ -45,6 +50,7 @@ const formSchema = z.object({
   desiredProduct: z.enum(productCategories),
   status: z.enum(clientStatuses),
   remarketingReminder: z.string().optional(),
+  tagIds: z.array(z.string()).optional(),
 });
 
 type ClientFormValues = z.infer<typeof formSchema>;
@@ -55,9 +61,10 @@ interface ClientFormProps {
   client?: Client | null;
   onClientAdded?: (client: Client) => void;
   onClientUpdated?: (client: Client) => void;
+  availableTags: Tag[];
 }
 
-export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClientUpdated }: ClientFormProps) {
+export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClientUpdated, availableTags }: ClientFormProps) {
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -76,6 +83,7 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
       desiredProduct: "Outros",
       status: "Novo Lead",
       remarketingReminder: "",
+      tagIds: [],
     },
   });
 
@@ -109,7 +117,10 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
 
   useEffect(() => {
     if (client) {
-      form.reset(client);
+      form.reset({
+        ...client,
+        tagIds: client.tagIds || []
+      });
     } else {
       form.reset({
         name: "",
@@ -119,6 +130,7 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
         desiredProduct: "Outros",
         status: "Novo Lead",
         remarketingReminder: "",
+        tagIds: [],
       });
     }
   }, [client, form, isOpen]);
@@ -254,6 +266,21 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
                 )}
               />
             </div>
+             <FormField
+              control={form.control}
+              name="tagIds"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Tags</FormLabel>
+                  <MultiSelectTags
+                    tags={availableTags}
+                    selected={field.value || []}
+                    onChange={field.onChange}
+                  />
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name="lastProductBought"
@@ -340,5 +367,95 @@ export function ClientForm({ isOpen, onOpenChange, client, onClientAdded, onClie
         </Form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+interface MultiSelectTagsProps {
+  tags: Tag[];
+  selected: string[];
+  onChange: (selected: string[]) => void;
+  className?: string;
+}
+
+function MultiSelectTags({ tags, selected, onChange, className }: MultiSelectTagsProps) {
+  const [open, setOpen] = useState(false);
+
+  const handleUnselect = (tagId: string) => {
+    onChange(selected.filter((id) => id !== tagId));
+  };
+
+  const getTagById = useCallback((id: string) => tags.find(t => t.id === id), [tags]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn(`w-full justify-between h-auto min-h-10`, selected.length > 0 ? 'h-full' : 'h-10', className)}
+          onClick={() => setOpen(!open)}
+        >
+          <div className="flex gap-1 flex-wrap">
+            {selected.length > 0 ? (
+              selected.map((tagId) => {
+                const tag = getTagById(tagId);
+                return tag ? (
+                  <Badge
+                    key={tag.id}
+                    variant="secondary"
+                    style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40` }}
+                    className="mr-1"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleUnselect(tag.id);
+                    }}
+                  >
+                    {tag.name}
+                    <X className="h-3 w-3 ml-1" />
+                  </Badge>
+                ) : null;
+              })
+            ) : (
+              "Selecione as tags"
+            )}
+          </div>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Buscar tags..." />
+          <CommandList>
+            <CommandEmpty>Nenhuma tag encontrada.</CommandEmpty>
+            <CommandGroup>
+              {tags.map((tag) => (
+                <CommandItem
+                  key={tag.id}
+                  onSelect={() => {
+                    const newSelected = selected.includes(tag.id)
+                      ? selected.filter((id) => id !== tag.id)
+                      : [...selected, tag.id];
+                    onChange(newSelected);
+                    setOpen(true);
+                  }}
+                  value={tag.name}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      selected.includes(tag.id) ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  <div className="h-4 w-4 rounded-full mr-2" style={{backgroundColor: tag.color}}></div>
+                  <span>{tag.name}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

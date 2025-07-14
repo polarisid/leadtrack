@@ -1,11 +1,12 @@
 
+
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours, endOfMonth, subMonths, startOfYear, endOfYear, subYears, addMonths, isAfter, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -20,6 +21,7 @@ const formSchema = z.object({
   status: z.enum(clientStatuses),
   remarketingReminder: z.string().optional(),
   referredBy: z.string().optional(),
+  tagIds: z.array(z.string()).optional(),
 });
 
 const captureLeadSchema = z.object({
@@ -226,6 +228,7 @@ export async function addBulkClients(clientsData: any[], userId: string) {
       normalizedContact,
       createdAt: now,
       updatedAt: now,
+      tagIds: [],
     };
     
     const docRef = doc(clientsRef);
@@ -277,6 +280,7 @@ export async function updateClient(id: string, data: unknown, userId: string) {
         const now = Timestamp.now();
         await updateDoc(clientDocRef, {
             ...result.data,
+            tagIds: result.data.tagIds || [],
             normalizedContact,
             updatedAt: now,
         });
@@ -574,7 +578,7 @@ export async function updateUserStatus(userIdToUpdate: string, newStatus: UserSt
 export async function sendPasswordResetForUser(email: string, adminId: string) {
   if (!auth) return { success: false, error: 'Firebase Auth não configurado.' };
   if (!await isAdmin(adminId)) {
-    return { success: false, error: 'Acesso negado. Ação permitida apenas para administradores.' };
+    return { success: false, error: 'Acesso permitida apenas para administradores.' };
   }
 
   try {
@@ -786,7 +790,7 @@ export async function getDashboardAnalytics(adminId: string, period: 'weekly' | 
     }));
 
   const salesBySeller: { [key: string]: { sales: number; revenue: number; } } = {};
-  sales.forEach(sale => {
+  salesThisPeriod.forEach(sale => {
     if (sale.userId) {
        if (!salesBySeller[sale.userId]) {
         salesBySeller[sale.userId] = { sales: 0, revenue: 0 };
@@ -1467,6 +1471,7 @@ export async function cancelSale(saleId: string, userId: string) {
       createdAt: (clientData?.createdAt as Timestamp).toDate().toISOString(),
       updatedAt: (clientData?.updatedAt as Timestamp).toDate().toISOString(),
       userId: clientData?.userId,
+      tagIds: clientData?.tagIds || []
     };
 
     return { success: true, updatedClient: updatedClient };
@@ -1864,6 +1869,7 @@ export async function captureLead(data: unknown, groupId: string) {
       groupId: groupId,
       createdAt: now,
       updatedAt: now,
+      tagIds: [],
     };
     batch.set(newClientRef, newClientData);
 
@@ -1956,5 +1962,134 @@ export async function claimLead(clientId: string, userId: string, userName: stri
     return { success: true, client: updatedClient };
   } catch (e: any) {
     return { success: false, error: e.message || 'Erro ao pegar o lead.' };
+  }
+}
+
+// ======== Tag Actions ========
+
+const tagFormSchema = z.object({
+  name: z.string().min(2, "O nome da tag deve ter pelo menos 2 caracteres."),
+  color: z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, "A cor deve ser um hexadecimal válido (ex: #RRGGBB)."),
+});
+
+export async function getTags(userId: string): Promise<Tag[]> {
+  if (!userId) return [];
+  if (!db) throw new Error("Firebase não está configurado.");
+  
+  const tagsRef = collection(db, 'tags');
+  const q = query(tagsRef, orderBy('createdAt', 'desc'));
+  const querySnapshot = await getDocs(q);
+
+  return querySnapshot.docs.map(doc => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      ...data,
+      createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+    } as Tag;
+  });
+}
+
+export async function createTag(data: unknown, adminId: string) {
+  if (!db) return { success: false, error: "Firebase não configurado." };
+  if (!await isAdmin(adminId)) {
+    return { success: false, error: 'Acesso negado.' };
+  }
+
+  const result = tagFormSchema.safeParse(data);
+  if (!result.success) {
+    const fieldErrors = result.error.flatten().fieldErrors;
+    return { success: false, error: fieldErrors.name?.[0] || fieldErrors.color?.[0] || "Erro de validação." };
+  }
+  
+  try {
+    const now = Timestamp.now();
+    const docRef = await addDoc(collection(db, 'tags'), {
+      ...result.data,
+      adminId,
+      createdAt: now,
+    });
+    revalidatePath('/admin/dashboard');
+
+    return { success: true, tag: { id: docRef.id, ...result.data, adminId, createdAt: now.toDate().toISOString() } as Tag };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao criar tag.' };
+  }
+}
+
+export async function updateTag(tagId: string, data: unknown, adminId: string) {
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+  if (!await isAdmin(adminId)) {
+    return { success: false, error: 'Acesso negado.' };
+  }
+
+  const result = tagFormSchema.safeParse(data);
+  if (!result.success) {
+    const fieldErrors = result.error.flatten().fieldErrors;
+    return { success: false, error: fieldErrors.name?.[0] || fieldErrors.color?.[0] || "Erro de validação." };
+  }
+
+  try {
+    const tagDocRef = doc(db, 'tags', tagId);
+    await updateDoc(tagDocRef, result.data);
+    revalidatePath('/admin/dashboard');
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao atualizar tag.' };
+  }
+}
+
+export async function deleteTag(tagId: string, adminId: string) {
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+  if (!await isAdmin(adminId)) {
+    return { success: false, error: 'Acesso negado.' };
+  }
+  
+  try {
+    await runTransaction(db, async (transaction) => {
+      // 1. Delete the tag document
+      const tagRef = doc(db, 'tags', tagId);
+      transaction.delete(tagRef);
+      
+      // 2. Find all clients that have this tag
+      const clientsRef = collection(db, 'clients');
+      const q = query(clientsRef, where('tagIds', 'array-contains', tagId));
+      const clientsSnapshot = await getDocs(q);
+
+      // 3. Remove the tagId from each client's tagIds array
+      clientsSnapshot.forEach(clientDoc => {
+        transaction.update(clientDoc.ref, {
+          tagIds: arrayRemove(tagId)
+        });
+      });
+    });
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/');
+    return { success: true };
+  } catch (e: any) {
+    console.error("Error deleting tag and updating clients:", e);
+    return { success: false, error: e.message || "Erro ao deletar tag." };
+  }
+}
+
+export async function updateClientTags(clientId: string, tagIds: string[], userId: string) {
+  if (!userId) {
+    return { success: false, error: 'Usuário não autenticado.' };
+  }
+  if (!db) {
+    return { success: false, error: "Firebase não está configurado." };
+  }
+
+  try {
+    const clientRef = doc(db, 'clients', clientId);
+    await updateDoc(clientRef, {
+      tagIds: tagIds,
+      updatedAt: Timestamp.now()
+    });
+    revalidatePath('/');
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message || "Erro ao atualizar as tags do cliente." };
   }
 }

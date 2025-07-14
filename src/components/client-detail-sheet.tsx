@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import {
@@ -9,7 +10,7 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { Client, Comment, MessageTemplate } from "@/lib/types";
+import { Client, Comment, MessageTemplate, Tag } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,7 +18,7 @@ import {
   User,
   MapPin,
   Phone,
-  Tag,
+  Tag as TagIcon,
   Bell,
   Calendar as CalendarIcon,
   Briefcase,
@@ -36,12 +37,14 @@ import { useToast } from "@/hooks/use-toast";
 import { Separator } from "./ui/separator";
 import { cn } from "@/lib/utils";
 import { WhatsappTemplateDialog } from "./whatsapp-template-dialog";
+import { Badge } from "./ui/badge";
 
 interface ClientDetailSheetProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   client: Client | null;
   templates: MessageTemplate[];
+  tags: Tag[];
 }
 
 export default function ClientDetailSheet({
@@ -49,6 +52,7 @@ export default function ClientDetailSheet({
   onOpenChange,
   client,
   templates,
+  tags
 }: ClientDetailSheetProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -109,7 +113,7 @@ export default function ClientDetailSheet({
       label: "Último Produto Comprado",
       value: client.lastProductBought || "Nenhum",
     },
-    { icon: Tag, label: "Produto Desejado", value: client.desiredProduct },
+    { icon: TagIcon, label: "Produto Desejado", value: client.desiredProduct },
     {
       icon: CalendarIcon,
       label: "Data de Criação",
@@ -127,14 +131,19 @@ export default function ClientDetailSheet({
       <Sheet open={isOpen} onOpenChange={onOpenChange}>
         <SheetContent className="sm:max-w-lg w-full flex flex-col gap-0 p-0">
           <SheetHeader className="text-left p-6 border-b">
-            <div className="flex items-center gap-4">
+            <div className="flex items-start gap-4">
               <div className="bg-primary/10 p-3 rounded-full">
                 <User className="h-6 w-6 text-primary" />
               </div>
-              <div>
+              <div className="flex-1">
                 <SheetTitle className="text-2xl">{client.name}</SheetTitle>
-                <SheetDescription>
+                <SheetDescription className="flex items-center gap-2 flex-wrap">
                   <StatusBadge status={client.status} className="mt-1" />
+                   {tags.map(tag => (
+                      <Badge key={tag.id} variant="secondary" style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40`}} className="font-normal mt-1">
+                          {tag.name}
+                      </Badge>
+                  ))}
                 </SheetDescription>
               </div>
             </div>

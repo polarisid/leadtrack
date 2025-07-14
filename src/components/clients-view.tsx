@@ -1,8 +1,9 @@
 
+
 'use client';
 
 import { useState, useMemo, useTransition, useRef, useEffect, useCallback } from 'react';
-import { Client, ClientStatus, clientStatuses, ProductCategory, productCategories, RecentSale, MessageTemplate } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, ProductCategory, productCategories, RecentSale, MessageTemplate, Tag } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -24,6 +25,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuPortal,
   DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
 } from '@/components/ui/dropdown-menu';
 import {
   Select,
@@ -61,9 +63,11 @@ import {
   Users,
   Hand,
   Loader2,
+  MessageSquare,
+  Tag as TagIcon,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead } from '@/app/actions';
+import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead, getTags, updateClientTags } from '@/app/actions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -117,6 +121,7 @@ export function ClientsView() {
   const [saleValueClient, setSaleValueClient] = useState<Client | null>(null);
   
   const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
 
   const [isPending, startTransition] = useTransition();
   const [isClaiming, startClaimingTransition] = useTransition();
@@ -131,11 +136,13 @@ export function ClientsView() {
       Promise.all([
         getClients(user.uid),
         getRecentSales(user.uid),
-        getMessageTemplates(user.uid)
-      ]).then(([clientsData, salesData, templatesData]) => {
+        getMessageTemplates(user.uid),
+        getTags(user.uid)
+      ]).then(([clientsData, salesData, templatesData, tagsData]) => {
         setClients(clientsData);
         setRecentSales(salesData);
         setMessageTemplates(templatesData);
+        setTags(tagsData);
       }).catch((error) => {
         console.error("Firebase permission error:", error);
         toast({
@@ -170,7 +177,7 @@ export function ClientsView() {
   }, [fetchGroupLeads]);
 
   useEffect(() => {
-    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
+    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
     audio.preload = 'auto';
     audioRef.current = audio;
   }, []);
@@ -200,6 +207,11 @@ export function ClientsView() {
   const selectedClient = useMemo(() => {
     return clients.find(c => c.id === selectedClientId) || null;
   }, [clients, selectedClientId]);
+
+  const clientTags = useMemo(() => {
+    if (!selectedClient || !selectedClient.tagIds) return [];
+    return tags.filter(tag => selectedClient.tagIds!.includes(tag.id));
+  }, [selectedClient, tags]);
   
   const handleAddClient = useCallback(() => {
     setEditingClient(null);
@@ -243,6 +255,28 @@ export function ClientsView() {
             }
         });
     }
+  };
+
+  const handleTagChange = (client: Client, tagId: string, isChecked: boolean) => {
+    if (!user) return;
+
+    startTransition(async () => {
+      const currentTags = client.tagIds || [];
+      const newTagIds = isChecked
+        ? [...currentTags, tagId]
+        : currentTags.filter((id) => id !== tagId);
+
+      const originalClients = [...clients];
+      setClients(prev => prev.map(c => c.id === client.id ? {...c, tagIds: newTagIds} : c));
+
+      const result = await updateClientTags(client.id, newTagIds, user.uid);
+      if (result.success) {
+        toast({ title: "Tags atualizadas!" });
+      } else {
+        setClients(originalClients);
+        toast({ variant: "destructive", title: "Erro ao atualizar tags", description: result.error });
+      }
+    });
   };
   
   const handleClaimLead = (clientId: string) => {
@@ -561,6 +595,7 @@ export function ClientsView() {
                                         <TableHead>Cidade</TableHead>
                                         <TableHead>Contato</TableHead>
                                         <TableHead>Última Atualização</TableHead>
+                                        <TableHead>Remarketing</TableHead>
                                         <TableHead>Produto Desejado</TableHead>
                                         <TableHead>Status</TableHead>
                                         <TableHead className="text-right">Ações</TableHead>
@@ -571,17 +606,32 @@ export function ClientsView() {
                                         const isInactive = client.updatedAt &&
                                                         isBefore(new Date(client.updatedAt), fifteenDaysAgo) &&
                                                         (client.status === 'Novo Lead' || client.status === 'Em negociação');
+                                        const clientTags = tags.filter(tag => client.tagIds?.includes(tag.id));
                                         return (
                                         <TableRow 
                                             key={client.id} 
                                             onClick={() => handleViewDetails(client.id)}
                                             className={cn("cursor-pointer", isInactive && "bg-red-100/50 dark:bg-red-900/20 hover:bg-red-100/70 dark:hover:bg-red-900/30 text-red-900 dark:text-red-200")}
                                         >
-                                        <TableCell className="font-medium">{client.name}</TableCell>
+                                        <TableCell className="font-medium">
+                                            <div className="flex flex-col gap-1">
+                                                <span>{client.name}</span>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {clientTags.map(tag => (
+                                                        <Badge key={tag.id} variant="secondary" style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40`}} className="font-normal">
+                                                            {tag.name}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </TableCell>
                                         <TableCell>{client.city}</TableCell>
                                         <TableCell>{client.contact}</TableCell>
                                         <TableCell>
                                             {client.updatedAt ? formatDistanceToNow(new Date(client.updatedAt), { addSuffix: true, locale: ptBR }) : '-'}
+                                        </TableCell>
+                                        <TableCell className="max-w-[150px] truncate" title={client.remarketingReminder}>
+                                            {client.remarketingReminder || '-'}
                                         </TableCell>
                                         <TableCell>{client.desiredProduct}</TableCell>
                                         <TableCell>
@@ -616,6 +666,28 @@ export function ClientsView() {
                                                     </DropdownMenuSubContent>
                                                 </DropdownMenuPortal>
                                                 </DropdownMenuSub>
+                                                <DropdownMenuSub>
+                                                    <DropdownMenuSubTrigger>
+                                                        <TagIcon className="mr-2 h-4 w-4" />
+                                                        <span>Mudar Tags</span>
+                                                    </DropdownMenuSubTrigger>
+                                                    <DropdownMenuPortal>
+                                                        <DropdownMenuSubContent>
+                                                            {tags.map((tag) => (
+                                                                <DropdownMenuCheckboxItem
+                                                                    key={tag.id}
+                                                                    checked={client.tagIds?.includes(tag.id)}
+                                                                    onSelect={(e) => e.preventDefault()}
+                                                                    onCheckedChange={(isChecked) => handleTagChange(client, tag.id, isChecked)}
+                                                                >
+                                                                    <div className="h-2 w-2 rounded-full mr-2" style={{ backgroundColor: tag.color }}></div>
+                                                                    {tag.name}
+                                                                </DropdownMenuCheckboxItem>
+                                                            ))}
+                                                            {tags.length === 0 && <DropdownMenuItem disabled>Nenhuma tag criada.</DropdownMenuItem>}
+                                                        </DropdownMenuSubContent>
+                                                    </DropdownMenuPortal>
+                                                </DropdownMenuSub>
                                                 <DropdownMenuSeparator />
                                                 <DropdownMenuItem
                                                     className="text-destructive focus:text-destructive"
@@ -644,6 +716,7 @@ export function ClientsView() {
                                 const isInactive = client.updatedAt &&
                                                 isBefore(new Date(client.updatedAt), fifteenDaysAgo) &&
                                                 (client.status === 'Novo Lead' || client.status === 'Em negociação');
+                                const clientTags = tags.filter(tag => client.tagIds?.includes(tag.id));
                                 return (
                                 <Card 
                                     key={client.id} 
@@ -654,6 +727,13 @@ export function ClientsView() {
                                         <div className="flex justify-between items-start">
                                             <div className={cn(isInactive && "text-red-900 dark:text-red-200")}>
                                                 <CardTitle>{client.name}</CardTitle>
+                                                <div className="flex flex-wrap gap-1 mt-2">
+                                                    {clientTags.map(tag => (
+                                                        <Badge key={tag.id} variant="secondary" style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40`}} className="font-normal">
+                                                            {tag.name}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
                                                 <StatusBadge status={client.status} className="mt-2" />
                                             </div>
                                         
@@ -686,6 +766,28 @@ export function ClientsView() {
                                                     </DropdownMenuSubContent>
                                                 </DropdownMenuPortal>
                                                 </DropdownMenuSub>
+                                                <DropdownMenuSub>
+                                                    <DropdownMenuSubTrigger>
+                                                        <TagIcon className="mr-2 h-4 w-4" />
+                                                        <span>Mudar Tags</span>
+                                                    </DropdownMenuSubTrigger>
+                                                    <DropdownMenuPortal>
+                                                        <DropdownMenuSubContent>
+                                                            {tags.map((tag) => (
+                                                                <DropdownMenuCheckboxItem
+                                                                    key={tag.id}
+                                                                    checked={client.tagIds?.includes(tag.id)}
+                                                                    onSelect={(e) => e.preventDefault()}
+                                                                    onCheckedChange={(isChecked) => handleTagChange(client, tag.id, isChecked)}
+                                                                >
+                                                                    <div className="h-2 w-2 rounded-full mr-2" style={{ backgroundColor: tag.color }}></div>
+                                                                    {tag.name}
+                                                                </DropdownMenuCheckboxItem>
+                                                            ))}
+                                                            {tags.length === 0 && <DropdownMenuItem disabled>Nenhuma tag criada.</DropdownMenuItem>}
+                                                        </DropdownMenuSubContent>
+                                                    </DropdownMenuPortal>
+                                                </DropdownMenuSub>
                                                 <DropdownMenuSeparator />
                                                 <DropdownMenuItem
                                                     className="text-destructive focus:text-destructive"
@@ -711,6 +813,10 @@ export function ClientsView() {
                                         <div className="flex items-center gap-2 text-muted-foreground">
                                             <ShoppingBag className="h-4 w-4"/>
                                             <span>{client.desiredProduct}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-muted-foreground">
+                                            <MessageSquare className="h-4 w-4"/>
+                                            <span className="truncate" title={client.remarketingReminder}>{client.remarketingReminder || '-'}</span>
                                         </div>
                                         <div className="flex items-center gap-2 text-muted-foreground">
                                             <Clock className="h-4 w-4"/>
@@ -797,6 +903,7 @@ export function ClientsView() {
         client={editingClient}
         onClientAdded={handleClientAdded}
         onClientUpdated={handleClientUpdated}
+        availableTags={tags}
       />
 
       <ClientImportDialog 
@@ -810,6 +917,7 @@ export function ClientsView() {
         onOpenChange={handleDetailSheetOpenChange}
         client={selectedClient}
         templates={messageTemplates}
+        tags={clientTags}
       />
       
       <SaleValueDialog
@@ -866,3 +974,5 @@ export function ClientsView() {
     </div>
   );
 }
+
+    

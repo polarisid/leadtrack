@@ -39,13 +39,25 @@ export default function AdminLoginPage() {
         const userDocRef = doc(db, "users", user.uid);
         const userDoc = await getDoc(userDocRef);
 
-        if (userDoc.exists() && userDoc.data().status === 'inactive') {
+        if (!userDoc.exists() || userDoc.data().role !== 'admin') {
+            await signOut(auth);
+            toast({
+                variant: "destructive",
+                title: "Acesso Negado",
+                description: "Você não tem permissão de administrador.",
+            });
+            setIsLoading(false);
+            return;
+        }
+
+        if (userDoc.data().status === 'inactive') {
           await signOut(auth);
           toast({
             variant: "destructive",
             title: "Acesso Negado",
             description: "Sua conta de administrador está inativa.",
           });
+          setIsLoading(false);
           return;
         }
       }
@@ -56,7 +68,7 @@ export default function AdminLoginPage() {
       toast({
         variant: "destructive",
         title: "Erro no login",
-        description: "Verifique suas credenciais ou se você tem permissão de administrador.",
+        description: "Verifique suas credenciais de administrador.",
       });
     } finally {
       setIsLoading(false);

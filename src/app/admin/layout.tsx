@@ -16,14 +16,19 @@ export default function AdminLayout({
   const pathname = usePathname();
 
   useEffect(() => {
-    // If not loading and not an admin, redirect to the main login page.
+    // Allow access to the admin login page itself
+    if (pathname === '/admin/login') {
+      return;
+    }
+    
+    // If not loading and not an admin, redirect to the admin login page.
     if (!loading && !isAdmin) {
-      router.replace('/login');
+      router.replace('/admin/login');
     }
   }, [user, loading, isAdmin, router, pathname]);
 
-  // Show a loading screen while auth state is being determined.
-  if (loading) {
+  // If trying to access a protected page while loading, show a skeleton.
+  if (loading && pathname !== '/admin/login') {
     return (
       <div className="flex h-screen w-full items-center justify-center">
         <Skeleton className="h-20 w-20 rounded-full" />
@@ -31,11 +36,11 @@ export default function AdminLayout({
     );
   }
 
-  // If the user is an admin, render the content.
-  // The useEffect will handle redirecting non-admins.
-  if (isAdmin) {
+  // Allow access to admin login page for anyone, or to children for authenticated admins
+  if (pathname === '/admin/login' || isAdmin) {
     return <>{children}</>;
   }
+
 
   // This return is a fallback, but the useEffect should handle redirection.
   // Returning null or a loader is fine while redirecting.

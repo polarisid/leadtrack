@@ -1,4 +1,5 @@
 
+
 export const productCategories = ['Eletrodomésticos', 'TV e AV', 'Telefonia', 'Informática', 'Outros'] as const;
 export type ProductCategory = (typeof productCategories)[number];
 
@@ -30,6 +31,7 @@ export interface Client {
   userId: string | null;
   groupId?: string;
   referredBy?: string;
+  tagIds?: string[];
 }
 
 export interface RecentSale {
@@ -92,6 +94,14 @@ export interface UserGoal {
   targetValue: number;
   currentValue: number;
   period: string; // YYYY-MM
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+  adminId: string;
+  createdAt: string;
 }
 
 

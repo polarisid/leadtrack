@@ -14,10 +14,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2 } from 'lucide-react';
+import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal } from '@/app/actions';
-import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal } from '@/lib/types';
+import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag } from '@/app/actions';
+import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -72,6 +72,7 @@ import { UserEditDialog } from '@/components/admin/user-edit-dialog';
 import { UserGroupDialog } from '@/components/admin/user-group-dialog';
 import { GroupEditDialog } from '@/components/admin/group-edit-dialog';
 import { TemplateEditDialog } from '@/components/admin/template-edit-dialog';
+import { TagEditDialog } from '@/components/admin/tag-edit-dialog';
 import { cn } from '@/lib/utils';
 import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
@@ -149,6 +150,10 @@ export default function AdminDashboardPage() {
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
 
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [isLoadingTags, setIsLoadingTags] = useState(true);
+  const [tagsError, setTagsError] = useState<string | null>(null);
+
   const [analyticsData, setAnalyticsData] = useState<DashboardAnalyticsData | null>(null);
   const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(true);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
@@ -188,6 +193,10 @@ export default function AdminDashboardPage() {
   const [editingTemplate, setEditingTemplate] = useState<MessageTemplate | null>(null);
   const [isEditTemplateOpen, setIsEditTemplateOpen] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<MessageTemplate | null>(null);
+  
+  const [editingTag, setEditingTag] = useState<Tag | null>(null);
+  const [isEditTagOpen, setIsEditTagOpen] = useState(false);
+  const [tagToDelete, setTagToDelete] = useState<Tag | null>(null);
 
   const periodMap = { weekly: 'Semana', monthly: 'Mês', yearly: 'Ano' };
   const periodArticleMap = { weekly: 'da', monthly: 'do', yearly: 'do' };
@@ -267,6 +276,19 @@ export default function AdminDashboardPage() {
       .finally(() => setIsLoadingTemplates(false));
   };
 
+  const fetchTags = () => {
+    if (!user) return;
+    setIsLoadingTags(true);
+    setTagsError(null);
+    getTags(user.uid)
+      .then(setTags)
+      .catch((err) => {
+        setTagsError(err.message || 'Ocorreu um erro ao buscar as tags.');
+        toast({ variant: 'destructive', title: 'Erro de Tags', description: 'Não foi possível carregar as tags.' });
+      })
+      .finally(() => setIsLoadingTags(false));
+  };
+
   const fetchGoals = () => {
     if (!user) return;
     setIsLoadingGoals(true);
@@ -284,6 +306,7 @@ export default function AdminDashboardPage() {
     if (user?.uid) {
         fetchGroups();
         fetchTemplates();
+        fetchTags();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -342,6 +365,11 @@ export default function AdminDashboardPage() {
     setEditingTemplate(template);
     setIsEditTemplateOpen(true);
   }
+  
+  const handleOpenTagEdit = (tag: Tag | null) => {
+    setEditingTag(tag);
+    setIsEditTagOpen(true);
+  }
 
   const onDataUpdated = () => {
     fetchGroups();
@@ -349,6 +377,7 @@ export default function AdminDashboardPage() {
     fetchDashboardAnalytics();
     fetchSellerAnalytics();
     fetchTemplates();
+    fetchTags();
     fetchGoals();
   };
   
@@ -434,6 +463,20 @@ export default function AdminDashboardPage() {
             toast({ variant: 'destructive', title: 'Erro', description: result.error });
         }
         setTemplateToDelete(null);
+    });
+  };
+
+  const handleDeleteTag = () => {
+    if (!tagToDelete || !user) return;
+    startTransition(async () => {
+        const result = await deleteTag(tagToDelete.id, user.uid);
+        if (result.success) {
+            toast({ title: 'Sucesso!', description: 'Tag deletada.' });
+            setTags(prev => prev.filter(t => t.id !== tagToDelete.id));
+        } else {
+            toast({ variant: 'destructive', title: 'Erro', description: result.error });
+        }
+        setTagToDelete(null);
     });
   };
 
@@ -892,6 +935,74 @@ export default function AdminDashboardPage() {
       </Card>
     );
   };
+
+  const renderTagManagementContent = () => {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+            <div>
+              <CardTitle>Gerenciamento de Tags</CardTitle>
+              <CardDescription>Crie, edite e delete tags para organizar seus clientes.</CardDescription>
+            </div>
+            <Button onClick={() => handleOpenTagEdit(null)}>
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Criar Tag
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoadingTags ? (
+            <div className="space-y-2">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : tagsError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Erro</AlertTitle>
+              <AlertDescription>{tagsError}</AlertDescription>
+            </Alert>
+          ) : tags.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Nenhuma tag criada.</p>
+          ) : (
+            <div className="border rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nome da Tag</TableHead>
+                    <TableHead>Cor</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {tags.map(tag => (
+                    <TableRow key={tag.id}>
+                      <TableCell className="font-medium">{tag.name}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <div className="h-4 w-4 rounded-full" style={{ backgroundColor: tag.color }}></div>
+                          <span className="text-muted-foreground">{tag.color}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenTagEdit(tag)} disabled={isPending}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setTagToDelete(tag)} disabled={isPending}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
   
   const renderGoalsManagementContent = () => {
     return (
@@ -1054,6 +1165,7 @@ export default function AdminDashboardPage() {
                 <TabsTrigger value="seller-data">Dados por Vendedor</TabsTrigger>
                 <TabsTrigger value="groups">Gerenciamento de Grupos</TabsTrigger>
                 <TabsTrigger value="templates">Templates de Mensagem</TabsTrigger>
+                <TabsTrigger value="tags">Tags de Clientes</TabsTrigger>
                 <TabsTrigger value="goals">Metas</TabsTrigger>
               </TabsList>
               
@@ -1187,8 +1299,8 @@ export default function AdminDashboardPage() {
                     </Card>
                     <Card className="md:col-span-3">
                       <CardHeader>
-                        <CardTitle className="flex items-center gap-2"><Trophy className="h-5 w-5 text-yellow-500" />Ranking de Vendas (por Receita)</CardTitle>
-                        <CardDescription>Vendedores com maior receita total.</CardDescription>
+                        <CardTitle className="flex items-center gap-2"><Trophy className="h-5 w-5 text-yellow-500" />Ranking de Vendas ({periodMap[overviewPeriod]})</CardTitle>
+                        <CardDescription>Vendedores com maior receita no período.</CardDescription>
                       </CardHeader>
                       <CardContent>
                         {isAnalyticsLoading ? <Skeleton className="h-[250px] w-full" /> : (
@@ -1212,7 +1324,7 @@ export default function AdminDashboardPage() {
                               ))}
                               {analyticsData?.salesRanking.length === 0 && (
                                 <TableRow>
-                                  <TableCell colSpan={4} className="text-center text-muted-foreground">Nenhuma venda registrada.</TableCell>
+                                  <TableCell colSpan={4} className="text-center text-muted-foreground">Nenhuma venda registrada no período.</TableCell>
                                 </TableRow>
                               )}
                             </TableBody>
@@ -1309,6 +1421,10 @@ export default function AdminDashboardPage() {
                 {renderTemplateManagementContent()}
               </TabsContent>
 
+              <TabsContent value="tags">
+                {renderTagManagementContent()}
+              </TabsContent>
+
               <TabsContent value="goals">
                 {renderGoalsManagementContent()}
               </TabsContent>
@@ -1344,6 +1460,13 @@ export default function AdminDashboardPage() {
         onOpenChange={setIsEditTemplateOpen}
         template={editingTemplate}
         onTemplateUpdated={onDataUpdated}
+      />
+
+      <TagEditDialog
+        isOpen={isEditTagOpen}
+        onOpenChange={setIsEditTagOpen}
+        tag={editingTag}
+        onTagUpdated={onDataUpdated}
       />
 
       <SellerLeadsDialog
@@ -1404,6 +1527,26 @@ export default function AdminDashboardPage() {
             <AlertDialogCancel onClick={() => setTemplateToDelete(null)}>Cancelar</AlertDialogCancel>
             <AlertDialogAction 
                 onClick={handleDeleteTemplate} 
+                className="bg-destructive hover:bg-destructive/90"
+                disabled={isPending}>
+                {isPending ? "Deletando..." : "Sim, deletar"}
+            </AlertDialogAction>
+            </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!tagToDelete} onOpenChange={(open) => !open && setTagToDelete(null)}>
+        <AlertDialogContent>
+            <AlertDialogHeader>
+            <AlertDialogTitle>Deletar a tag "{tagToDelete?.name}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+                Esta ação não pode ser desfeita. A tag será removida de todos os clientes.
+            </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setTagToDelete(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction 
+                onClick={handleDeleteTag} 
                 className="bg-destructive hover:bg-destructive/90"
                 disabled={isPending}>
                 {isPending ? "Deletando..." : "Sim, deletar"}
