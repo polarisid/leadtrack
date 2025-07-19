@@ -1,1 +1,6 @@
-// This file is intentionally left blank to resolve a build issue.
+import {genkit} from 'genkit';
+import {googleAI} from '@genkit-ai/googleai';
+
+export const ai = genkit({
+  plugins: [googleAI()],
+});

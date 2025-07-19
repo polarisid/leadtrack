@@ -1,4 +1,5 @@
 
+import { z } from 'zod';
 
 export const productCategories = ['Eletrodomésticos', 'TV e AV', 'Telefonia', 'Informática', 'Outros'] as const;
 export type ProductCategory = (typeof productCategories)[number];
@@ -14,6 +15,29 @@ export type UserStatus = (typeof userStatuses)[number];
 
 export const analyticsPeriods = ['total', 'yearly', 'monthly', 'weekly', 'daily'] as const;
 export type AnalyticsPeriod = (typeof analyticsPeriods)[number];
+
+// AI Related Schemas
+export const LeadAnalysisInputSchema = z.object({
+  name: z.string().describe('O nome do cliente.'),
+  city: z.string().describe('A cidade do cliente.'),
+  status: z.enum(clientStatuses).describe('O status atual do lead.'),
+  desiredProduct: z.enum(productCategories).describe('O produto que o cliente deseja.'),
+  lastProductBought: z.string().optional().describe('O último produto que o cliente comprou, se houver.'),
+  remarketingReminder: z.string().optional().describe('Um lembrete de remarketing, se houver.'),
+  comments: z.array(z.object({
+    userName: z.string().optional(),
+    text: z.string(),
+    isSystemMessage: z.boolean().optional(),
+  })).describe('Uma lista de comentários e observações sobre o lead.'),
+});
+export type LeadAnalysisInput = z.infer<typeof LeadAnalysisInputSchema>;
+
+export const LeadAnalysisOutputSchema = z.object({
+  analysis: z.string().describe('Uma análise concisa do potencial deste lead, incluindo pontos fortes e fracos.'),
+  salesTips: z.array(z.string()).describe('Uma lista de 2 a 3 dicas de vendas acionáveis e específicas para este lead.'),
+  suggestedMessage: z.string().describe('Uma mensagem de saudação curta e personalizada para iniciar a conversa com este lead no WhatsApp.'),
+});
+export type LeadAnalysisOutput = z.infer<typeof LeadAnalysisOutputSchema>;
 
 
 export interface Client {
@@ -32,6 +56,7 @@ export interface Client {
   groupId?: string;
   referredBy?: string;
   tagIds?: string[];
+  lastAnalysis?: LeadAnalysisOutput;
 }
 
 export interface RecentSale {

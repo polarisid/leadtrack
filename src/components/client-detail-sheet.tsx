@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import {
@@ -10,7 +9,7 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { Client, Comment, MessageTemplate, Tag } from "@/lib/types";
+import { Client, Comment, MessageTemplate, Tag, LeadAnalysisOutput } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,19 +24,24 @@ import {
   Loader2,
   MessageSquare,
   Info,
+  Sparkles,
+  Lightbulb,
+  Copy,
 } from "lucide-react";
 import { StatusBadge } from "./status-badge";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { WhatsappIcon } from "./icons/whatsapp-icon";
 import { useState, useEffect, useTransition } from "react";
-import { getComments, addComment } from "@/app/actions";
+import { getComments, addComment, analyzeLeadAction, saveLeadAnalysis } from "@/app/actions";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "./ui/separator";
 import { cn } from "@/lib/utils";
 import { WhatsappTemplateDialog } from "./whatsapp-template-dialog";
 import { Badge } from "./ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { Skeleton } from "./ui/skeleton";
 
 interface ClientDetailSheetProps {
   isOpen: boolean;
@@ -45,6 +49,7 @@ interface ClientDetailSheetProps {
   client: Client | null;
   templates: MessageTemplate[];
   tags: Tag[];
+  onClientUpdated: (client: Client) => void;
 }
 
 export default function ClientDetailSheet({
@@ -52,18 +57,24 @@ export default function ClientDetailSheet({
   onOpenChange,
   client,
   templates,
-  tags
+  tags,
+  onClientUpdated,
 }: ClientDetailSheetProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [comments, setComments] = useState<Comment[]>([]);
   const [isLoadingComments, setIsLoadingComments] = useState(true);
   const [newComment, setNewComment] = useState("");
-  const [isSaving, startTransition] = useTransition();
+  const [isSaving, startSavingTransition] = useTransition();
   const [isWhatsappDialogOpen, setIsWhatsappDialogOpen] = useState(false);
 
-  useEffect(() => {
-    if (isOpen && client?.id && user?.uid) {
+  const [isAnalyzing, startAnalysisTransition] = useTransition();
+  const [analysisResult, setAnalysisResult] = useState<LeadAnalysisOutput | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+
+  const fetchClientComments = () => {
+      if (client?.id && user?.uid) {
       setIsLoadingComments(true);
       getComments(client.id, user.uid)
         .then((fetchedComments) => {
@@ -80,12 +91,27 @@ export default function ClientDetailSheet({
           setIsLoadingComments(false);
         });
     }
-  }, [isOpen, client?.id, user?.uid, toast]);
+  }
+
+  useEffect(() => {
+    if (isOpen && client) {
+        fetchClientComments();
+        // Load existing analysis if present
+        if (client.lastAnalysis) {
+            setAnalysisResult(client.lastAnalysis);
+        }
+    } else {
+        // Reset state when sheet is closed
+        setAnalysisResult(null);
+        setAnalysisError(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, client, user?.uid]);
 
   const handleSaveComment = () => {
     if (!newComment.trim() || !client || !user) return;
 
-    startTransition(async () => {
+    startSavingTransition(async () => {
       const result = await addComment(client.id, newComment, user.uid);
       if (result.success && result.comment) {
         setComments((prev) => [result.comment!, ...prev]);
@@ -98,6 +124,48 @@ export default function ClientDetailSheet({
           description: result.error || "Não foi possível salvar a observação.",
         });
       }
+    });
+  };
+
+  const handleAnalyzeLead = () => {
+    if (!client) return;
+
+    startAnalysisTransition(async () => {
+        setAnalysisResult(null);
+        setAnalysisError(null);
+        try {
+            const result = await analyzeLeadAction({
+                name: client.name,
+                city: client.city,
+                status: client.status,
+                desiredProduct: client.desiredProduct,
+                lastProductBought: client.lastProductBought,
+                remarketingReminder: client.remarketingReminder,
+                comments: comments.map(c => ({ text: c.text, userName: c.userName, isSystemMessage: c.isSystemMessage }))
+            });
+            setAnalysisResult(result);
+            
+            // Save the successful analysis
+            const saveResult = await saveLeadAnalysis(client.id, result);
+            if (saveResult.success && saveResult.updatedClient) {
+              onClientUpdated(saveResult.updatedClient);
+              toast({ title: "Análise salva com sucesso!" });
+            } else {
+              toast({ variant: "destructive", title: "Erro", description: "Não foi possível salvar a análise." });
+            }
+
+        } catch (error) {
+            setAnalysisError("A IA não conseguiu analisar este lead. Tente novamente mais tarde.");
+            console.error("AI Analysis Error:", error);
+        }
+    });
+  };
+
+  const handleCopyMessage = (message: string) => {
+    navigator.clipboard.writeText(message).then(() => {
+      toast({ title: "Mensagem copiada!", description: "A mensagem foi copiada para a área de transferência." });
+    }, () => {
+      toast({ variant: "destructive", title: "Erro", description: "Não foi possível copiar a mensagem." });
     });
   };
 
@@ -126,6 +194,8 @@ export default function ClientDetailSheet({
     },
   ];
 
+  const clientTags = tags.filter(tag => client.tagIds?.includes(tag.id));
+
   return (
     <>
       <Sheet open={isOpen} onOpenChange={onOpenChange}>
@@ -139,7 +209,7 @@ export default function ClientDetailSheet({
                 <SheetTitle className="text-2xl">{client.name}</SheetTitle>
                 <SheetDescription className="flex items-center gap-2 flex-wrap">
                   <StatusBadge status={client.status} className="mt-1" />
-                   {tags.map(tag => (
+                   {clientTags.map(tag => (
                       <Badge key={tag.id} variant="secondary" style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40`}} className="font-normal mt-1">
                           {tag.name}
                       </Badge>
@@ -176,6 +246,74 @@ export default function ClientDetailSheet({
                   </div>
                 ))}
               </div>
+
+              <Separator />
+              
+              {/* AI Analysis Section */}
+               <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-lg flex items-center gap-2">
+                        <Sparkles className="h-5 w-5 text-primary" />
+                        Análise com IA
+                    </h3>
+                    <Button size="sm" onClick={handleAnalyzeLead} disabled={isAnalyzing}>
+                        {isAnalyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Analisar Lead
+                    </Button>
+                </div>
+                {isAnalyzing ? (
+                     <div className="space-y-4">
+                        <Skeleton className="h-4 w-3/4" />
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-5/6" />
+                        <Skeleton className="h-8 w-1/2 mt-2" />
+                     </div>
+                ) : analysisError ? (
+                    <Alert variant="destructive">
+                        <AlertTitle>Erro na Análise</AlertTitle>
+                        <AlertDescription>{analysisError}</AlertDescription>
+                    </Alert>
+                ) : analysisResult ? (
+                    <div className="space-y-4 text-sm">
+                        <div>
+                            <h4 className="font-semibold mb-1 text-foreground">Análise do Lead</h4>
+                            <p className="text-muted-foreground italic">{analysisResult.analysis}</p>
+                        </div>
+                        <div>
+                            <h4 className="font-semibold mb-2 text-foreground">Dicas de Venda</h4>
+                            <ul className="space-y-2">
+                                {analysisResult.salesTips.map((tip, index) => (
+                                    <li key={index} className="flex items-start gap-2">
+                                        <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                                        <span className="text-muted-foreground">{tip}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                        {analysisResult.suggestedMessage && (
+                            <div>
+                                <h4 className="font-semibold mb-2 text-foreground">Mensagem de Saudação</h4>
+                                <div className="p-3 rounded-md border bg-muted/50 text-muted-foreground relative group">
+                                    <p className="italic">"{analysisResult.suggestedMessage}"</p>
+                                     <Button 
+                                        size="icon" 
+                                        variant="ghost" 
+                                        className="absolute top-2 right-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        onClick={() => handleCopyMessage(analysisResult.suggestedMessage)}
+                                    >
+                                        <Copy className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <p className="text-sm text-muted-foreground text-center p-4 bg-muted/50 rounded-md">
+                        Clique em "Analisar Lead" para receber dicas e insights da IA sobre este cliente.
+                    </p>
+                )}
+              </div>
+
 
               <Separator />
 

@@ -3,13 +3,14 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours, endOfMonth, subMonths, startOfYear, endOfYear, subYears, addMonths, isAfter, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { analyzeLead } from '@/ai/flows/lead-analysis-flow';
 
 
 const formSchema = z.object({
@@ -1598,7 +1599,7 @@ export async function createMessageTemplate(data: unknown, adminId: string) {
   }
 
 export async function updateMessageTemplate(templateId: string, data: unknown, adminId: string) {
-  if (!db) return { success: false, error: "Firebase não está configurado." };
+  if (!db) return { success: false, error: "Firebase não configurado." };
   if (!await isAdmin(adminId)) {
     return { success: false, error: 'Acesso negado.' };
   }
@@ -2018,7 +2019,7 @@ export async function createTag(data: unknown, adminId: string) {
 }
 
 export async function updateTag(tagId: string, data: unknown, adminId: string) {
-  if (!db) return { success: false, error: "Firebase não está configurado." };
+  if (!db) return { success: false, error: "Firebase não configurado." };
   if (!await isAdmin(adminId)) {
     return { success: false, error: 'Acesso negado.' };
   }
@@ -2092,4 +2093,34 @@ export async function updateClientTags(clientId: string, tagIds: string[], userI
   } catch (e: any) {
     return { success: false, error: e.message || "Erro ao atualizar as tags do cliente." };
   }
+}
+
+// AI Actions
+export async function analyzeLeadAction(input: LeadAnalysisInput) {
+    return await analyzeLead(input);
+}
+
+export async function saveLeadAnalysis(clientId: string, analysis: LeadAnalysisOutput) {
+    if (!db) {
+        return { success: false, error: "Firebase não está configurado." };
+    }
+    try {
+        const clientRef = doc(db, 'clients', clientId);
+        await updateDoc(clientRef, {
+            lastAnalysis: analysis
+        });
+        
+        const updatedDoc = await getDoc(clientRef);
+        const updatedClient = {
+            id: updatedDoc.id,
+            ...updatedDoc.data(),
+            createdAt: (updatedDoc.data()?.createdAt as Timestamp).toDate().toISOString(),
+            updatedAt: (updatedDoc.data()?.updatedAt as Timestamp).toDate().toISOString(),
+        } as Client;
+
+        revalidatePath('/');
+        return { success: true, updatedClient };
+    } catch (e: any) {
+        return { success: false, error: e.message || "Erro ao salvar análise." };
+    }
 }

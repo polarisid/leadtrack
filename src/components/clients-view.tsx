@@ -207,11 +207,6 @@ export function ClientsView() {
   const selectedClient = useMemo(() => {
     return clients.find(c => c.id === selectedClientId) || null;
   }, [clients, selectedClientId]);
-
-  const clientTags = useMemo(() => {
-    if (!selectedClient || !selectedClient.tagIds) return [];
-    return tags.filter(tag => selectedClient.tagIds!.includes(tag.id));
-  }, [selectedClient, tags]);
   
   const handleAddClient = useCallback(() => {
     setEditingClient(null);
@@ -917,7 +912,8 @@ export function ClientsView() {
         onOpenChange={handleDetailSheetOpenChange}
         client={selectedClient}
         templates={messageTemplates}
-        tags={clientTags}
+        tags={tags}
+        onClientUpdated={handleClientUpdated}
       />
       
       <SaleValueDialog
