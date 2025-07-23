@@ -14,10 +14,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon } from 'lucide-react';
+import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon, Sparkles, BrainCircuit, Lightbulb } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag } from '@/app/actions';
-import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag } from '@/lib/types';
+import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag, getAdminDailySummaryAction } from '@/app/actions';
+import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag, AdminDailySummaryOutput } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -197,6 +197,11 @@ export default function AdminDashboardPage() {
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
   const [isEditTagOpen, setIsEditTagOpen] = useState(false);
   const [tagToDelete, setTagToDelete] = useState<Tag | null>(null);
+  
+  const [adminSummary, setAdminSummary] = useState<AdminDailySummaryOutput | null>(null);
+  const [isGeneratingAdminSummary, setIsGeneratingAdminSummary] = useState(false);
+  const [adminSummaryError, setAdminSummaryError] = useState<string | null>(null);
+
 
   const periodMap = { weekly: 'Semana', monthly: 'Mês', yearly: 'Ano' };
   const periodArticleMap = { weekly: 'da', monthly: 'do', yearly: 'do' };
@@ -566,6 +571,24 @@ export default function AdminDashboardPage() {
         console.error('Could not copy text: ', err);
       });
   };
+
+  const handleGenerateAdminSummary = () => {
+    if (!user) return;
+    setIsGeneratingAdminSummary(true);
+    setAdminSummaryError(null);
+    getAdminDailySummaryAction(user.uid)
+      .then(result => {
+        if (result.success && result.summary) {
+          setAdminSummary(result.summary);
+          toast({ title: "Briefing geral gerado com sucesso!" });
+        } else {
+          setAdminSummaryError(result.error || "Ocorreu um erro desconhecido.");
+          toast({ variant: "destructive", title: "Erro ao Gerar Briefing", description: result.error });
+        }
+      })
+      .finally(() => setIsGeneratingAdminSummary(false));
+  };
+
 
   const renderUsersContent = () => {
     if (isLoadingUsers) {
@@ -1136,6 +1159,109 @@ export default function AdminDashboardPage() {
     );
   };
 
+  const renderAdminBriefingContent = () => {
+    const renderSummary = () => {
+      if (isGeneratingAdminSummary) {
+        return (
+          <div className="space-y-4 p-6 pt-0">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-5/6" />
+            <div className="pt-4 space-y-2">
+              <Skeleton className="h-6 w-1/4" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+            </div>
+          </div>
+        );
+      }
+
+      if (adminSummaryError) {
+        return <p className="text-sm text-destructive text-center p-6">{adminSummaryError}</p>;
+      }
+
+      if (adminSummary) {
+        return (
+          <CardContent className="space-y-6">
+            <div>
+              <h4 className="font-semibold mb-2 flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /> Visão Geral do Portfólio</h4>
+              <p className="text-sm text-muted-foreground italic">"{adminSummary.portfolioOverview}"</p>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <h4 className="font-semibold mb-2 flex items-center gap-2"><Trophy className="h-4 w-4 text-yellow-500" /> Vendedores em Destaque</h4>
+                <ul className="space-y-2">
+                  {adminSummary.topSellers.map((seller, index) => (
+                    <li key={index} className="flex items-start gap-3 text-sm">
+                      <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                      <div>
+                        <span className="font-semibold text-foreground">{seller.name}:</span>
+                        <span className="text-muted-foreground ml-1">{seller.reason}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <h4 className="font-semibold mb-2 flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-500" /> Vendedores para Acompanhar</h4>
+                <ul className="space-y-2">
+                  {adminSummary.sellersToWatch.map((seller, index) => (
+                    <li key={index} className="flex items-start gap-3 text-sm">
+                      <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                      <div>
+                        <span className="font-semibold text-foreground">{seller.name}:</span>
+                        <span className="text-muted-foreground ml-1">{seller.reason}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold mb-2 flex items-center gap-2"><BrainCircuit className="h-4 w-4" /> Oportunidades Globais</h4>
+              <ul className="space-y-2">
+                {adminSummary.globalOpportunities.map((op, index) => (
+                  <li key={index} className="flex items-start gap-3 text-sm">
+                    <Sparkles className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                    <span className="text-muted-foreground">{op.description}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        );
+      }
+
+      return (
+        <CardContent className="flex flex-col items-center justify-center text-center p-8">
+          <p className="text-muted-foreground mb-4">Receba um resumo inteligente de toda a equipe de vendas para tomar decisões estratégicas.</p>
+          <Button onClick={handleGenerateAdminSummary} disabled={isGeneratingAdminSummary}>
+            {isGeneratingAdminSummary && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Gerar Briefing da Equipe
+          </Button>
+        </CardContent>
+      );
+    }
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            Briefing Diário da Equipe
+          </CardTitle>
+          <CardDescription>
+            Análise de toda a carteira de clientes da equipe gerada por IA.
+          </CardDescription>
+        </CardHeader>
+        {renderSummary()}
+      </Card>
+    );
+  }
+
 
   return (
     <>
@@ -1163,6 +1289,7 @@ export default function AdminDashboardPage() {
               <TabsList>
                 <TabsTrigger value="overview">Visão Geral e Usuários</TabsTrigger>
                 <TabsTrigger value="seller-data">Dados por Vendedor</TabsTrigger>
+                <TabsTrigger value="briefing">Briefing Geral</TabsTrigger>
                 <TabsTrigger value="groups">Gerenciamento de Grupos</TabsTrigger>
                 <TabsTrigger value="templates">Templates de Mensagem</TabsTrigger>
                 <TabsTrigger value="tags">Tags de Clientes</TabsTrigger>
@@ -1411,6 +1538,10 @@ export default function AdminDashboardPage() {
                     {renderSellerAnalyticsContent()}
                   </CardContent>
                 </Card>
+              </TabsContent>
+
+              <TabsContent value="briefing">
+                {renderAdminBriefingContent()}
               </TabsContent>
 
               <TabsContent value="groups">

@@ -3,7 +3,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction } from 'firebase/firestore';
@@ -11,6 +11,8 @@ import { sendPasswordResetEmail } from 'firebase/auth';
 import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours, endOfMonth, subMonths, startOfYear, endOfYear, subYears, addMonths, isAfter, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { analyzeLead } from '@/ai/flows/lead-analysis-flow';
+import { generateDailySummary } from '@/ai/flows/daily-summary-flow';
+import { generateAdminDailySummary } from '@/ai/flows/admin-daily-summary-flow';
 
 
 const formSchema = z.object({
@@ -1374,7 +1376,7 @@ export async function updateGroup(groupId: string, name: string, adminId: string
 }
 
 export async function deleteGroup(groupId: string, adminId: string) {
-  if (!db) return { success: false, error: "Firebase não configurado." };
+  if (!db) return { success: false, error: "Firebase não está configurado." };
   if (!await isAdmin(adminId)) {
     return { success: false, error: 'Acesso negado.' };
   }
@@ -1599,7 +1601,7 @@ export async function createMessageTemplate(data: unknown, adminId: string) {
   }
 
 export async function updateMessageTemplate(templateId: string, data: unknown, adminId: string) {
-  if (!db) return { success: false, error: "Firebase não configurado." };
+  if (!db) return { success: false, error: "Firebase não está configurado." };
   if (!await isAdmin(adminId)) {
     return { success: false, error: 'Acesso negado.' };
   }
@@ -2019,7 +2021,7 @@ export async function createTag(data: unknown, adminId: string) {
 }
 
 export async function updateTag(tagId: string, data: unknown, adminId: string) {
-  if (!db) return { success: false, error: "Firebase não configurado." };
+  if (!db) return { success: false, error: "Firebase não está configurado." };
   if (!await isAdmin(adminId)) {
     return { success: false, error: 'Acesso negado.' };
   }
@@ -2122,5 +2124,97 @@ export async function saveLeadAnalysis(clientId: string, analysis: LeadAnalysisO
         return { success: true, updatedClient };
     } catch (e: any) {
         return { success: false, error: e.message || "Erro ao salvar análise." };
+    }
+}
+
+export async function getDailySummaryAction(userId: string): Promise<{ success: boolean; summary?: DailySummaryOutput; error?: string }> {
+    if (!userId) return { success: false, error: "User not authenticated." };
+    if (!db) return { success: false, error: "Firebase not configured." };
+
+    try {
+        const userRef = doc(db, 'users', userId);
+        const userDoc = await getDoc(userRef);
+
+        if (!userDoc.exists()) {
+            return { success: false, error: "User not found." };
+        }
+
+        const allClients = await getClients(userId);
+
+        if (allClients.length === 0) {
+            return { success: false, error: "No clients to analyze." };
+        }
+
+        const clientsForAnalysis = allClients.map(c => ({
+            name: c.name,
+            status: c.status,
+            desiredProduct: c.desiredProduct,
+            updatedAt: c.updatedAt || c.createdAt,
+        }));
+
+        const summary = await generateDailySummary({ clients: clientsForAnalysis });
+
+        await updateDoc(userRef, {
+            dailySummary: {
+                date: format(new Date(), 'yyyy-MM-dd'),
+                summary: summary,
+            },
+        });
+
+        revalidatePath('/');
+        return { success: true, summary: summary };
+
+    } catch (e: any) {
+        return { success: false, error: e.message || "Failed to generate daily summary." };
+    }
+}
+
+export async function getAdminDailySummaryAction(adminId: string): Promise<{ success: boolean; summary?: AdminDailySummaryOutput; error?: string }> {
+    if (!adminId || !db) return { success: false, error: "Not authenticated or DB not configured." };
+    if (!await isAdmin(adminId)) return { success: false, error: "Access denied." };
+
+    try {
+        const usersRef = collection(db, 'users');
+        const usersQuery = query(usersRef, where('role', '==', 'vendedor'));
+        const usersSnapshot = await getDocs(usersQuery);
+
+        if (usersSnapshot.empty) {
+            return { success: false, error: "No sellers found to analyze." };
+        }
+
+        const allSellers = usersSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
+
+        const allClientsSnapshot = await getDocs(collection(db, 'clients'));
+        const allClientsData = allClientsSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                ...data,
+                id: doc.id,
+                createdAt: (data.createdAt as Timestamp).toDate(),
+                updatedAt: (data.updatedAt as Timestamp).toDate(),
+            } as Client;
+        });
+
+        const sellersData = allSellers.map(seller => {
+            const sellerClients = allClientsData
+                .filter(client => client.userId === seller.id)
+                .map(client => ({
+                    status: client.status,
+                    updatedAt: (client.updatedAt || client.createdAt).toISOString(),
+                }));
+
+            return {
+                sellerName: seller.name,
+                clients: sellerClients,
+            };
+        });
+
+        const summary = await generateAdminDailySummary({ sellers: sellersData });
+        
+        revalidatePath('/admin/dashboard');
+        return { success: true, summary: summary };
+
+    } catch (e: any) {
+        return { success: false, error: e.message || "Failed to generate admin daily summary." };
     }
 }

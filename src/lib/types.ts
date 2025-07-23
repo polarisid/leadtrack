@@ -39,6 +39,56 @@ export const LeadAnalysisOutputSchema = z.object({
 });
 export type LeadAnalysisOutput = z.infer<typeof LeadAnalysisOutputSchema>;
 
+export const DailySummaryInputSchema = z.object({
+    clients: z.array(z.object({
+        name: z.string(),
+        status: z.enum(clientStatuses),
+        desiredProduct: z.enum(productCategories),
+        updatedAt: z.string().describe("ISO date string of last update"),
+    })).describe("A list of clients for the user.")
+});
+export type DailySummaryInput = z.infer<typeof DailySummaryInputSchema>;
+
+export const DailySummaryOutputSchema = z.object({
+    overview: z.string().describe("A brief, general overview of the client portfolio's health and potential for the day."),
+    hotLeads: z.array(z.object({
+        name: z.string(),
+        reason: z.string(),
+    })).describe("A list of 2-3 hot leads to prioritize, with a brief reason for each."),
+    leadsToWatch: z.array(z.object({
+        name: z.string(),
+        reason: z.string(),
+    })).describe("A list of 1-2 leads that are at risk or need attention, with a brief reason."),
+});
+export type DailySummaryOutput = z.infer<typeof DailySummaryOutputSchema>;
+
+export const AdminDailySummaryInputSchema = z.object({
+    sellers: z.array(z.object({
+        sellerName: z.string(),
+        clients: z.array(z.object({
+            status: z.enum(clientStatuses),
+            updatedAt: z.string().describe("ISO date string of last update"),
+        })),
+    })).describe("A list of sellers and their respective clients."),
+});
+export type AdminDailySummaryInput = z.infer<typeof AdminDailySummaryInputSchema>;
+
+export const AdminDailySummaryOutputSchema = z.object({
+    portfolioOverview: z.string().describe("Uma visão geral de alto nível sobre a saúde do portfólio de toda a equipe."),
+    topSellers: z.array(z.object({
+        name: z.string(),
+        reason: z.string(),
+    })).describe("Uma lista de 2-3 vendedores com melhor desempenho ou potencial para o dia, com o motivo."),
+    sellersToWatch: z.array(z.object({
+        name: z.string(),
+        reason: z.string(),
+    })).describe("Uma lista de 1-2 vendedores que precisam de atenção ou suporte, com o motivo."),
+    globalOpportunities: z.array(z.object({
+        description: z.string(),
+    })).describe("Uma lista de 1-2 oportunidades ou riscos globais na carteira de clientes."),
+});
+export type AdminDailySummaryOutput = z.infer<typeof AdminDailySummaryOutputSchema>;
+
 
 export interface Client {
   id: string;
@@ -91,6 +141,10 @@ export interface UserProfile {
   status: UserStatus;
   createdAt: string;
   groupId?: string;
+  dailySummary?: {
+    date: string; // YYYY-MM-DD
+    summary: DailySummaryOutput;
+  }
 }
 
 export interface MessageTemplate {

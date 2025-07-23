@@ -4,7 +4,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { UserProfile } from '@/lib/types';
 
 interface AuthContextType {
@@ -28,38 +28,49 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUser(user);
         if (db) {
           const userDocRef = doc(db, 'users', user.uid);
-          const userDoc = await getDoc(userDocRef);
-          if (userDoc.exists()) {
-            const data = userDoc.data();
-            const profile: UserProfile = {
-              id: user.uid,
-              name: data.name,
-              email: data.email,
-              role: data.role,
-              status: data.status,
-              groupId: data.groupId,
-              createdAt: data.createdAt.toDate().toISOString(),
-            };
-            setUserProfile(profile);
-            setIsAdmin(profile.role === 'admin');
-          } else {
-             // Handle case where user exists in Auth but not in Firestore
-             setUserProfile(null);
-             setIsAdmin(false);
-          }
+          
+          // Use onSnapshot for real-time updates to userProfile
+          const unsubscribeSnapshot = onSnapshot(userDocRef, (doc) => {
+            if (doc.exists()) {
+              const data = doc.data();
+              const profile: UserProfile = {
+                id: user.uid,
+                name: data.name,
+                email: data.email,
+                role: data.role,
+                status: data.status,
+                groupId: data.groupId,
+                createdAt: data.createdAt.toDate().toISOString(),
+                dailySummary: data.dailySummary // Add dailySummary
+              };
+              setUserProfile(profile);
+              setIsAdmin(profile.role === 'admin');
+            } else {
+              setUserProfile(null);
+              setIsAdmin(false);
+            }
+             setLoading(false);
+          }, (error) => {
+            console.error("Error listening to user document:", error);
+            setUserProfile(null);
+            setIsAdmin(false);
+            setLoading(false);
+          });
+
+          return () => unsubscribeSnapshot();
         }
       } else {
         // User is signed out.
         setUser(null);
         setUserProfile(null);
         setIsAdmin(false);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();
