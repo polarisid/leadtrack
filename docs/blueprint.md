@@ -1,21 +1,19 @@
-# **App Name**: ClientSpotter
+# **App Name**: SmartService OS
 
 ## Core Features:
 
-- Client Listing: Displays a searchable list of clients showing their Name, City, Contact, and Status.
-- Status Filter: Enables filtering clients by status (e.g., 'Negotiating').
-- Name Search: Allows searching for clients by name.
-- New Client Form: A form to create a new client with fields for Name, City, Contact, Desired Product, Last Product Bought, Status, and Remarketing Reminder.
-- Automatic Creation Date: Automatically capture the client's creation date upon submission of a new client.
-- Client Editing: Enables updating any client field and a quick action to change the client's status (e.g., 'Mark as Closed').
-- Export Placeholder: A placeholder button for future export of the client list to CSV or Excel formats.
+- Technician Selection: Implement a persistent technician selection for quick service order assignment.
+- Quick Service Order Form: Enable the user to create formatted text blocks for quick service orders that include service type, symptom and repair codes, parts replaced, and free-form observations, configured via dropdown menus and text areas.
+- Service Type Management: Include defined service types: Samsung Repair (LP / OW / VOID), Samsung Budget Visit (with approved field and value), Assurant Visit.
+- Generate Formatted Text: Allow the app to copy formatted text after order completion to easily communicate job specifics
+- Admin Login: Admin users can login via a separate interface
 
 ## Style Guidelines:
 
-- Primary color: A calming blue (#64B5F6) to inspire trust.
-- Background color: Light grayish-blue (#F0F4F8) to offer a clean, professional backdrop.
-- Accent color: A complementary green (#81C784) to highlight successful actions or key metrics.
-- Body and headline font: 'PT Sans', a humanist sans-serif, which balances modernity with warmth, making it ideal for both headings and body text.
-- A clean and responsive layout to ensure optimal viewing and interaction across desktop and mobile devices.
-- Simple, clear icons to represent client status and actions, improving visual navigation.
-- Subtle transitions and animations for actions like saving or updating client information, providing smooth user feedback.
+- Primary color: Deep sky blue (#3399FF) to convey a sense of trust, security, and professionalism suitable for managing important data.
+- Background color: Very light blue (#E5F2FF), almost white, for a clean, uncluttered appearance, contributing to ease of use and readability.
+- Accent color: Electric violet (#8F00FF) to add a modern, technical accent, enhancing visual interest and highlighting interactive elements.
+- Body and headline font: 'Inter' (sans-serif) for a modern, clean and easily readable interface, which will facilitate easy data interpretation.
+- Use clear and recognizable icons that are appropriate for technical service management and have a professional appearance. Prefer flat icons to outlined.
+- Adopt a clean and structured layout to ensure data is presented in an easy-to-understand manner. Utilize clear section dividers.
+- Employ subtle animations to show state changes of the ui components and loading transitions. Avoid animations which distract.
