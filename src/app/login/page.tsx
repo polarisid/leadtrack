@@ -19,9 +19,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
-import { ShieldCheck } from "lucide-react";
+import { Target } from "lucide-react";
 
-export default function AdminLoginPage() {
+export default function SellerLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -39,36 +39,40 @@ export default function AdminLoginPage() {
         const userDocRef = doc(db, "users", user.uid);
         const userDoc = await getDoc(userDocRef);
 
-        if (!userDoc.exists() || userDoc.data().role !== 'admin') {
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          if (userData.status === 'inactive') {
             await signOut(auth);
             toast({
-                variant: "destructive",
-                title: "Acesso Negado",
-                description: "Você não tem permissão de administrador.",
+              variant: "destructive",
+              title: "Acesso Negado",
+              description: "Sua conta está inativa. Entre em contato com o administrador.",
             });
             setIsLoading(false);
             return;
-        }
+          }
 
-        if (userDoc.data().status === 'inactive') {
-          await signOut(auth);
-          toast({
-            variant: "destructive",
-            title: "Acesso Negado",
-            description: "Sua conta de administrador está inativa.",
-          });
-          setIsLoading(false);
-          return;
+          if (userData.role === 'admin') {
+            await signOut(auth);
+            toast({
+              variant: "destructive",
+              title: "Login Inválido",
+              description: "Esta é a página de login para vendedores. Use a página de login de administrador.",
+            });
+            setIsLoading(false);
+            router.push('/admin/login');
+            return;
+          }
         }
       }
-
-      toast({ title: "Login de administrador bem-sucedido!" });
-      router.push("/admin/dashboard");
+      
+      toast({ title: "Login bem-sucedido!" });
+      router.push("/");
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Erro no login",
-        description: "Verifique suas credenciais de administrador.",
+        description: "Verifique seu e-mail e senha.",
       });
     } finally {
       setIsLoading(false);
@@ -76,15 +80,17 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900">
+    <div className="flex items-center justify-center min-h-screen bg-background">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-            <div className="flex justify-center items-center gap-2 mb-4">
-                <ShieldCheck className="h-8 w-8 text-primary" />
-                <h1 className="text-2xl font-bold">Painel do Admin</h1>
-            </div>
-          <CardTitle>Login do Administrador</CardTitle>
-          <CardDescription>Acesse o painel de controle.</CardDescription>
+          <div className="flex justify-center items-center gap-2 mb-4">
+            <Target className="h-8 w-8 text-primary" />
+            <h1 className="text-2xl font-bold">LeadTrack</h1>
+          </div>
+          <CardTitle className="text-2xl">Login do Vendedor</CardTitle>
+          <CardDescription>
+            Acesse sua conta para gerenciar seus clientes.
+          </CardDescription>
         </CardHeader>
         <form onSubmit={handleLogin}>
           <CardContent className="space-y-4">
@@ -93,7 +99,7 @@ export default function AdminLoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@email.com"
+                placeholder="vendedor@email.com"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -115,9 +121,15 @@ export default function AdminLoginPage() {
               {isLoading ? "Entrando..." : "Entrar"}
             </Button>
             <p className="text-xs text-muted-foreground">
-              Não é um administrador?{" "}
-              <Link href="/login" className="underline hover:text-primary">
-                Login de Vendedor
+              Não tem uma conta?{" "}
+              <Link href="/register" className="underline hover:text-primary">
+                Registre-se
+              </Link>
+            </p>
+             <p className="text-xs text-muted-foreground">
+              É um administrador?{" "}
+              <Link href="/admin/login" className="underline hover:text-primary">
+                Login de Admin
               </Link>
             </p>
           </CardFooter>
