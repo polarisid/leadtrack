@@ -22,6 +22,7 @@ const prompt = ai.definePrompt({
 
 Analise a lista de vendedores e seus respectivos clientes. Considere a data de "última atualização" (updatedAt) e o "status" de cada lead para fazer suas recomendações. Leads em "Novo Lead" ou "Em negociação" sem atualização por muito tempo são um risco. Vendedores com muitos leads nessa situação podem precisar de ajuda.
 
+Responda em português do Brasil.
 Sua resposta DEVE estar no formato JSON, usando codificação UTF-8.
 
 1.  **portfolioOverview:** Um parágrafo curto (2-3 frases) dando um panorama geral da saúde da carteira de clientes de toda a equipe.

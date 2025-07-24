@@ -59,6 +59,7 @@ export const DailySummaryOutputSchema = z.object({
         name: z.string(),
         reason: z.string(),
     })).describe("A list of 1-2 leads that are at risk or need attention, with a brief reason."),
+    dailyActions: z.array(z.string()).describe("A list of 3 actionable daily tasks to increase sales."),
 });
 export type DailySummaryOutput = z.infer<typeof DailySummaryOutputSchema>;
 

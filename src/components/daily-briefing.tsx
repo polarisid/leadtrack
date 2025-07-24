@@ -8,7 +8,7 @@ import { getDailySummaryAction } from "@/app/actions";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { AlertTriangle, Lightbulb, Loader2, Sparkles, CheckCircle } from "lucide-react";
+import { AlertTriangle, Lightbulb, Loader2, Sparkles, CheckCircle, Target } from "lucide-react";
 import { Skeleton } from "./ui/skeleton";
 import { format, isToday, parseISO } from 'date-fns';
 
@@ -30,7 +30,7 @@ export function DailyBriefing() {
 
 
   const handleGenerateSummary = () => {
-    if (!user?.uid || hasTodaysSummary) return;
+    if (!user?.uid || (hasTodaysSummary && !isGenerating)) return;
 
     startGenerating(async () => {
         setError(null);
@@ -67,8 +67,22 @@ export function DailyBriefing() {
     
     if (summary) {
         return (
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6">
                 <p className="text-sm text-muted-foreground italic">"{summary.overview}"</p>
+                
+                {summary.dailyActions && summary.dailyActions.length > 0 && (
+                    <div>
+                        <h4 className="font-semibold mb-2 flex items-center gap-2"><Target className="h-4 w-4 text-green-500" /> Ações do Dia</h4>
+                        <ul className="space-y-2">
+                            {summary.dailyActions.map((action, index) => (
+                                <li key={index} className="flex items-start gap-3 text-sm">
+                                    <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                                    <span className="text-muted-foreground">{action}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
                 
                 <div>
                     <h4 className="font-semibold mb-2 flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /> Leads em Destaque</h4>

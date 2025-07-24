@@ -1,3 +1,4 @@
+
 'use server';
 /**
  * @fileOverview An AI flow to generate a daily summary for a seller's leads.
@@ -25,11 +26,13 @@ Analise a lista de clientes fornecida e gere um resumo conciso e acionável.
 
 Considere a data de "última atualização" (updatedAt) e o "status" de cada lead para fazer suas recomendações. Leads com status "Novo Lead" ou "Em negociação" que não são atualizados há muito tempo são leads em risco. Leads com interações recentes ou status positivos são mais promissores.
 
-Sua resposta DEVE estar no formato JSON, usando codificação UTF-8, e contendo os campos "overview", "hotLeads", e "leadsToWatch".
+Responda em português do Brasil.
+Sua resposta DEVE estar no formato JSON, usando codificação UTF-8.
 
 1.  **overview:** Um parágrafo curto (2-3 frases) dando um panorama geral da carteira.
 2.  **hotLeads:** Uma lista de 2 a 3 leads "quentes" que o vendedor deve priorizar hoje, com o motivo.
 3.  **leadsToWatch:** Uma lista de 1 a 2 leads que precisam de atenção (em risco de ficarem frios), com o motivo.
+4.  **dailyActions:** Uma lista de 3 ações práticas e específicas que o vendedor pode tomar hoje para aumentar suas vendas.
 
 Exemplo de resposta JSON:
 {
@@ -40,6 +43,11 @@ Exemplo de resposta JSON:
   ],
   "leadsToWatch": [
     { "name": "Carlos Souza", "reason": "Está em negociação há mais de duas semanas sem atualização. Risco de esfriar." }
+  ],
+  "dailyActions": [
+    "Envie uma mensagem de acompanhamento para os leads em 'Em negociação' que não atualiza há mais de 5 dias.",
+    "Tente uma nova abordagem com os 'leadsToWatch', talvez oferecendo um benefício ou condição especial.",
+    "Reserve 30 minutos para prospectar novos clientes com o perfil dos seus 'hotLeads'."
   ]
 }
 
