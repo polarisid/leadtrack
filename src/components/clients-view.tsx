@@ -3,7 +3,7 @@
 'use client';
 
 import { useState, useMemo, useTransition, useRef, useEffect, useCallback } from 'react';
-import { Client, ClientStatus, clientStatuses, ProductCategory, productCategories, RecentSale, MessageTemplate, Tag } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, ProductCategory, productCategories, RecentSale, MessageTemplate, Tag, Offer } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -65,9 +65,10 @@ import {
   Loader2,
   MessageSquare,
   Tag as TagIcon,
+  Flame,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead, getTags, updateClientTags } from '@/app/actions';
+import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead, getTags, updateClientTags, getOffers } from '@/app/actions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -93,6 +94,7 @@ import { SaleValueDialog } from './sale-value-dialog';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { SellerPerformanceView } from './seller-performance-view';
+import { OfferFeed } from './offer-feed';
 import { Badge } from './ui/badge';
 
 
@@ -122,6 +124,8 @@ export function ClientsView() {
   
   const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [isLoadingOffers, setIsLoadingOffers] = useState(true);
 
   const [isPending, startTransition] = useTransition();
   const [isClaiming, startClaimingTransition] = useTransition();
@@ -132,17 +136,20 @@ export function ClientsView() {
     if (user?.uid) {
       setIsLoadingClients(true);
       setIsLoadingRecentSales(true);
+      setIsLoadingOffers(true);
       
       Promise.all([
         getClients(user.uid),
         getRecentSales(user.uid),
         getMessageTemplates(user.uid),
-        getTags(user.uid)
-      ]).then(([clientsData, salesData, templatesData, tagsData]) => {
+        getTags(user.uid),
+        getOffers(),
+      ]).then(([clientsData, salesData, templatesData, tagsData, offersData]) => {
         setClients(clientsData);
         setRecentSales(salesData);
         setMessageTemplates(templatesData);
         setTags(tagsData);
+        setOffers(offersData);
       }).catch((error) => {
         console.error("Firebase permission error:", error);
         toast({
@@ -154,6 +161,7 @@ export function ClientsView() {
       }).finally(() => {
         setIsLoadingClients(false);
         setIsLoadingRecentSales(false);
+        setIsLoadingOffers(false);
       });
     }
   }, [user?.uid, toast]);
@@ -397,6 +405,14 @@ export function ClientsView() {
     await signOut(auth);
   };
 
+  const onOfferCreated = (newOffer: Offer) => {
+    setOffers(prev => [newOffer, ...prev]);
+  };
+  
+  const onOfferLiked = (offerId: string, newLikedBy: string[]) => {
+      setOffers(prev => prev.map(o => o.id === offerId ? { ...o, likedBy: newLikedBy } : o));
+  };
+
   const fifteenDaysAgo = subDays(new Date(), 15);
 
 
@@ -434,11 +450,15 @@ export function ClientsView() {
 
       <main className="flex-1 container mx-auto p-4 sm:p-6 lg:p-8">
         <Tabs defaultValue="clientes" className="w-full">
-            <TabsList className="grid w-full grid-cols-3 max-w-lg mx-auto mb-6">
+            <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto mb-6">
                 <TabsTrigger value="clientes">
                     <LayoutGrid className="mr-2 h-4 w-4" />
                     Meus Clientes
                     <Badge variant="secondary" className="ml-2 rounded-full">{filteredClients.length}</Badge>
+                </TabsTrigger>
+                 <TabsTrigger value="offers">
+                    <Flame className="mr-2 h-4 w-4" />
+                    Feed de Ofertas
                 </TabsTrigger>
                 <TabsTrigger value="grupo" disabled={!userProfile?.groupId}>
                     <Users className="mr-2 h-4 w-4" />
@@ -832,6 +852,18 @@ export function ClientsView() {
                 )}
             </TabsContent>
 
+            <TabsContent value="offers">
+                <OfferFeed
+                    offers={offers}
+                    isLoading={isLoadingOffers}
+                    onOfferCreated={onOfferCreated}
+                    onOfferLiked={onOfferLiked}
+                    currentUserId={user?.uid || ''}
+                    currentUserProfile={userProfile}
+                    clients={clients}
+                />
+            </TabsContent>
+
             <TabsContent value="grupo">
                 <Card>
                     <CardHeader>
@@ -970,5 +1002,3 @@ export function ClientsView() {
     </div>
   );
 }
-
-    

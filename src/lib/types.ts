@@ -16,6 +16,22 @@ export type UserStatus = (typeof userStatuses)[number];
 export const analyticsPeriods = ['total', 'yearly', 'monthly', 'weekly', 'daily'] as const;
 export type AnalyticsPeriod = (typeof analyticsPeriods)[number];
 
+export const offerStatuses = ['pending', 'approved', 'rejected'] as const;
+export type OfferStatus = (typeof offerStatuses)[number];
+
+// Offer Schema
+export const OfferSchema = z.object({
+  title: z.string().min(3, "O título deve ter pelo menos 3 caracteres."),
+  sku: z.string().optional(),
+  price: z.number().positive("O preço deve ser um número positivo."),
+  coupon: z.string().optional(),
+  photoUrl: z.string().url("A URL da foto é inválida.").optional().or(z.literal('')),
+  validUntil: z.date({ required_error: "A data de validade é obrigatória."}),
+  category: z.enum(productCategories, { required_error: "A categoria é obrigatória." }),
+});
+export type OfferFormValues = z.infer<typeof OfferSchema>;
+
+
 // AI Related Schemas
 export const LeadAnalysisInputSchema = z.object({
   name: z.string().describe('O nome do cliente.'),
@@ -89,6 +105,19 @@ export const AdminDailySummaryOutputSchema = z.object({
     })).describe("Uma lista de 1-2 oportunidades ou riscos globais na carteira de clientes."),
 });
 export type AdminDailySummaryOutput = z.infer<typeof AdminDailySummaryOutputSchema>;
+
+export const OfferTextGeneratorInputSchema = z.object({
+    title: z.string().describe('O título da oferta (nome do produto).'),
+    price: z.number().describe('O preço da oferta.'),
+    coupon: z.string().optional().describe('Um cupom de desconto, se houver.'),
+    validUntil: z.string().describe('A data de validade da oferta (string ISO).'),
+});
+export type OfferTextGeneratorInput = z.infer<typeof OfferTextGeneratorInputSchema>;
+
+export const OfferTextGeneratorOutputSchema = z.object({
+    text: z.string().describe('Uma mensagem curta, amigável e persuasiva para o WhatsApp. Use o placeholder <cliente> para o nome do cliente. Inclua emojis para deixar a mensagem mais atrativa.'),
+});
+export type OfferTextGeneratorOutput = z.infer<typeof OfferTextGeneratorOutputSchema>;
 
 
 export interface Client {
@@ -181,6 +210,22 @@ export interface Tag {
   name: string;
   color: string;
   adminId: string;
+  createdAt: string;
+}
+
+export interface Offer {
+  id: string;
+  title: string;
+  sku: string;
+  price: number;
+  coupon: string;
+  photoUrl?: string;
+  validUntil: string;
+  status: OfferStatus;
+  category: ProductCategory;
+  createdBy: string;
+  createdByName: string;
+  likedBy: string[];
   createdAt: string;
 }
 

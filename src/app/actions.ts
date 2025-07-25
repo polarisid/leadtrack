@@ -1,18 +1,24 @@
 
 
+
+
+
+
+
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction, arrayUnion } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours, endOfMonth, subMonths, startOfYear, endOfYear, subYears, addMonths, isAfter, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { analyzeLead } from '@/ai/flows/lead-analysis-flow';
 import { generateDailySummary } from '@/ai/flows/daily-summary-flow';
 import { generateAdminDailySummary } from '@/ai/flows/admin-daily-summary-flow';
+import { generateOfferShareText } from '@/ai/flows/offer-text-flow';
 
 
 const formSchema = z.object({
@@ -23,7 +29,6 @@ const formSchema = z.object({
   desiredProduct: z.enum(productCategories),
   status: z.enum(clientStatuses),
   remarketingReminder: z.string().optional(),
-  referredBy: z.string().optional(),
   tagIds: z.array(z.string()).optional(),
 });
 
@@ -1097,7 +1102,7 @@ export async function getSellerPerformanceData(userId: string, period: 'yearly' 
   const clientsThisPeriod = allClients.filter(c => isWithinInterval(c.createdAt, { start: startOfCurrentPeriod, end: endOfCurrentPeriod }));
   const salesThisPeriod = allSales.filter(s => isWithinInterval(s.saleDate, { start: startOfCurrentPeriod, end: endOfCurrentPeriod }));
 
-  const clientsLastPeriod = allClients.filter(c => isWithinInterval(c.createdAt, { start: startOfPreviousPeriod, end: endOfPreviousPeriod }));
+  const clientsLastPeriod = allClients.filter(c => isWithinInterval(c.createdAt, { start: startOfPreviousPeriod, end: endOfCurrentPeriod }));
   const salesLastPeriod = allSales.filter(s => isWithinInterval(s.saleDate, { start: startOfPreviousPeriod, end: endOfPreviousPeriod }));
 
   const personalLeadsThis = clientsThisPeriod.filter(lead => lead.userId === userId).length;
@@ -2217,4 +2222,175 @@ export async function getAdminDailySummaryAction(adminId: string): Promise<{ suc
     } catch (e: any) {
         return { success: false, error: e.message || "Failed to generate admin daily summary." };
     }
+}
+
+// ======== Offer Actions ========
+
+export async function createOffer(data: OfferFormValues, userId: string, userName: string, isAdminCreation: boolean = false) {
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+  
+  try {
+    const now = Timestamp.now();
+    const newOfferData = {
+      ...data,
+      createdBy: userId,
+      createdByName: userName,
+      createdAt: now,
+      status: isAdminCreation ? 'approved' : ('pending' as OfferStatus),
+      likedBy: [],
+      validUntil: Timestamp.fromDate(data.validUntil),
+    };
+    
+    const docRef = await addDoc(collection(db, 'offers'), newOfferData);
+    
+    revalidatePath('/');
+    revalidatePath('/admin/dashboard');
+
+    const createdDoc = await getDoc(docRef);
+    const createdData = createdDoc.data();
+
+    return { 
+      success: true, 
+      offer: { 
+        id: docRef.id, 
+        ...createdData,
+        validUntil: (createdData?.validUntil as Timestamp).toDate().toISOString(),
+        createdAt: (createdData?.createdAt as Timestamp).toDate().toISOString(),
+      } as Offer 
+    };
+
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao criar oferta.' };
+  }
+}
+
+export async function updateOffer(offerId: string, data: OfferFormValues, adminId: string) {
+  if (!db || !await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+
+  try {
+    const offerRef = doc(db, 'offers', offerId);
+    const offerToUpdate = {
+        ...data,
+        validUntil: Timestamp.fromDate(data.validUntil),
+    };
+    await updateDoc(offerRef, offerToUpdate);
+
+    revalidatePath('/');
+    revalidatePath('/admin/dashboard');
+    
+    const updatedDoc = await getDoc(offerRef);
+    const updatedData = updatedDoc.data();
+
+    return { 
+        success: true, 
+        offer: {
+            id: offerRef.id,
+            ...updatedData,
+            validUntil: (updatedData?.validUntil as Timestamp).toDate().toISOString(),
+            createdAt: (updatedData?.createdAt as Timestamp).toDate().toISOString(),
+        } as Offer
+    };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao atualizar oferta.' };
+  }
+}
+
+
+export async function getOffers(): Promise<Offer[]> {
+  if (!db) throw new Error("Firebase não está configurado.");
+  
+  const offersRef = collection(db, 'offers');
+  const q = query(offersRef, where('status', '==', 'approved'), orderBy('createdAt', 'desc'));
+  const querySnapshot = await getDocs(q);
+
+  return querySnapshot.docs.map(doc => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      ...data,
+      validUntil: (data.validUntil as Timestamp).toDate().toISOString(),
+      createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+    } as Offer;
+  });
+}
+
+export async function getAllOffersForAdmin(adminId: string): Promise<Offer[]> {
+  if (!db || !await isAdmin(adminId)) return [];
+
+  const offersRef = collection(db, 'offers');
+  const q = query(offersRef, orderBy('createdAt', 'desc'));
+  const querySnapshot = await getDocs(q);
+
+  return querySnapshot.docs.map(doc => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      ...data,
+      validUntil: (data.validUntil as Timestamp).toDate().toISOString(),
+      createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+    } as Offer;
+  });
+}
+
+export async function updateOfferStatus(offerId: string, status: OfferStatus, adminId: string) {
+  if (!db || !await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+
+  try {
+    await updateDoc(doc(db, 'offers', offerId), { status });
+    revalidatePath('/');
+    revalidatePath('/admin/dashboard');
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao atualizar status da oferta.' };
+  }
+}
+
+export async function deleteOffer(offerId: string, adminId: string) {
+  if (!db || !await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+
+  try {
+    await deleteDoc(doc(db, 'offers', offerId));
+    revalidatePath('/');
+    revalidatePath('/admin/dashboard');
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao deletar oferta.' };
+  }
+}
+
+export async function toggleOfferLike(offerId: string, userId: string) {
+  if (!db || !userId) return { success: false, error: 'Acesso negado.' };
+  
+  const offerRef = doc(db, 'offers', offerId);
+
+  try {
+    const offerDoc = await getDoc(offerRef);
+    if (!offerDoc.exists()) {
+      return { success: false, error: 'Oferta não encontrada.' };
+    }
+
+    const likedBy: string[] = offerDoc.data().likedBy || [];
+    let updatedLikedBy: string[];
+
+    if (likedBy.includes(userId)) {
+      // User has already liked, so unlike
+      updatedLikedBy = likedBy.filter(id => id !== userId);
+    } else {
+      // User has not liked, so like
+      updatedLikedBy = [...likedBy, userId];
+    }
+    
+    await updateDoc(offerRef, { likedBy: updatedLikedBy });
+    
+    revalidatePath('/');
+
+    return { success: true, likedBy: updatedLikedBy };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao curtir oferta.' };
+  }
+}
+
+
+export async function generateOfferShareTextAction(input: OfferTextGeneratorInput): Promise<OfferTextGeneratorOutput> {
+    return await generateOfferShareText(input);
 }

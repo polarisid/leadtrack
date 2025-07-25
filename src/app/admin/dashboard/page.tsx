@@ -2,6 +2,7 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
+import dynamic from 'next/dynamic';
 import { useAuth } from '@/context/auth-context';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
@@ -14,10 +15,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon, Sparkles, BrainCircuit, Lightbulb } from 'lucide-react';
+import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon, Sparkles, BrainCircuit, Lightbulb, Flame, CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag, getAdminDailySummaryAction } from '@/app/actions';
-import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag, AdminDailySummaryOutput } from '@/lib/types';
+import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag, getAdminDailySummaryAction, getAllOffersForAdmin, updateOfferStatus, deleteOffer } from '@/app/actions';
+import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag, AdminDailySummaryOutput, Offer, OfferStatus, OfferFormValues, ProductCategory } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -63,22 +64,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from '@/components/ui/badge';
-import { format, subMonths } from 'date-fns';
+import { format, subMonths, isPast } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
-import { UserEditDialog } from '@/components/admin/user-edit-dialog';
-import { UserGroupDialog } from '@/components/admin/user-group-dialog';
-import { GroupEditDialog } from '@/components/admin/group-edit-dialog';
-import { TemplateEditDialog } from '@/components/admin/template-edit-dialog';
-import { TagEditDialog } from '@/components/admin/tag-edit-dialog';
 import { cn } from '@/lib/utils';
 import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
-import { SellerLeadsDialog } from '@/components/admin/seller-leads-dialog';
+
+const UserEditDialog = dynamic(() => import('@/components/admin/user-edit-dialog').then(mod => mod.UserEditDialog));
+const UserGroupDialog = dynamic(() => import('@/components/admin/user-group-dialog').then(mod => mod.UserGroupDialog));
+const GroupEditDialog = dynamic(() => import('@/components/admin/group-edit-dialog').then(mod => mod.GroupEditDialog));
+const TemplateEditDialog = dynamic(() => import('@/components/admin/template-edit-dialog').then(mod => mod.TemplateEditDialog));
+const TagEditDialog = dynamic(() => import('@/components/admin/tag-edit-dialog').then(mod => mod.TagEditDialog));
+const SellerLeadsDialog = dynamic(() => import('@/components/admin/seller-leads-dialog').then(mod => mod.SellerLeadsDialog));
+const OfferForm = dynamic(() => import('@/components/offer-form').then(mod => mod.OfferForm));
 
 
 const chartConfig = {
@@ -133,7 +136,7 @@ const ComparisonText = ({ value, period }: { value: number | undefined; period: 
 
 
 export default function AdminDashboardPage() {
-  const { user } = useAuth();
+  const { user, userProfile } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
@@ -153,6 +156,14 @@ export default function AdminDashboardPage() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [isLoadingTags, setIsLoadingTags] = useState(true);
   const [tagsError, setTagsError] = useState<string | null>(null);
+
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [isLoadingOffers, setIsLoadingOffers] = useState(true);
+  const [offersError, setOffersError] = useState<string | null>(null);
+  const [offerToDelete, setOfferToDelete] = useState<Offer | null>(null);
+  const [offerFilter, setOfferFilter] = useState<'all' | OfferStatus>('all');
+  const [editingOffer, setEditingOffer] = useState<Offer | null>(null);
+  const [isOfferFormOpen, setIsOfferFormOpen] = useState(false);
 
   const [analyticsData, setAnalyticsData] = useState<DashboardAnalyticsData | null>(null);
   const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(true);
@@ -294,6 +305,20 @@ export default function AdminDashboardPage() {
       .finally(() => setIsLoadingTags(false));
   };
 
+  const fetchOffers = () => {
+    if (!user) return;
+    setIsLoadingOffers(true);
+    setOffersError(null);
+    getAllOffersForAdmin(user.uid)
+        .then(setOffers)
+        .catch(err => {
+            setOffersError(err.message || 'Ocorreu um erro ao buscar as ofertas.');
+            toast({ variant: 'destructive', title: 'Erro de Ofertas', description: 'Não foi possível carregar as ofertas.' });
+        })
+        .finally(() => setIsLoadingOffers(false));
+  };
+
+
   const fetchGoals = () => {
     if (!user) return;
     setIsLoadingGoals(true);
@@ -312,6 +337,7 @@ export default function AdminDashboardPage() {
         fetchGroups();
         fetchTemplates();
         fetchTags();
+        fetchOffers();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -376,6 +402,11 @@ export default function AdminDashboardPage() {
     setIsEditTagOpen(true);
   }
 
+  const handleOpenOfferForm = (offer: Offer | null) => {
+    setEditingOffer(offer);
+    setIsOfferFormOpen(true);
+  };
+
   const onDataUpdated = () => {
     fetchGroups();
     fetchUsers();
@@ -384,6 +415,7 @@ export default function AdminDashboardPage() {
     fetchTemplates();
     fetchTags();
     fetchGoals();
+    fetchOffers();
   };
   
   const handleSendPasswordReset = (email: string) => {
@@ -539,6 +571,34 @@ export default function AdminDashboardPage() {
         setGoalToDelete(null);
     });
   };
+  
+  const handleOfferStatusChange = (offerId: string, status: OfferStatus) => {
+      if (!user) return;
+      startTransition(async () => {
+          const result = await updateOfferStatus(offerId, status, user.uid);
+          if (result.success) {
+              toast({ title: 'Sucesso!', description: 'Status da oferta atualizado.' });
+              fetchOffers();
+          } else {
+              toast({ variant: 'destructive', title: 'Erro', description: result.error });
+          }
+      });
+  };
+
+  const handleDeleteOffer = () => {
+      if (!offerToDelete || !user) return;
+      startTransition(async () => {
+          const result = await deleteOffer(offerToDelete.id, user.uid);
+          if (result.success) {
+              toast({ title: 'Sucesso!', description: 'Oferta deletada.' });
+              setOffers(prev => prev.filter(o => o.id !== offerToDelete.id));
+          } else {
+              toast({ variant: 'destructive', title: 'Erro', description: result.error });
+          }
+          setOfferToDelete(null);
+      });
+  };
+
 
   const generateGoalPeriodOptions = () => {
     const options = [];
@@ -1261,6 +1321,134 @@ export default function AdminDashboardPage() {
       </Card>
     );
   }
+  
+  const renderOfferManagementContent = () => {
+    const getStatusBadge = (status: OfferStatus) => {
+      const styleMap: Record<OfferStatus, string> = {
+        pending: "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-800",
+        approved: "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/50 dark:text-green-200 dark:border-green-800",
+        rejected: "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/50 dark:text-red-200 dark:border-red-800",
+      };
+      const textMap: Record<OfferStatus, string> = {
+        pending: "Pendente",
+        approved: "Aprovada",
+        rejected: "Rejeitada",
+      };
+      return <Badge variant="outline" className={cn("font-normal", styleMap[status])}>{textMap[status]}</Badge>;
+    }
+
+    const filteredOffers = offers.filter(offer => offerFilter === 'all' || offer.status === offerFilter);
+    
+    let content;
+    if (isLoadingOffers) {
+      content = (
+        <div className="space-y-2">
+          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+        </div>
+      );
+    } else if (offersError) {
+      content = <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Erro</AlertTitle><AlertDescription>{offersError}</AlertDescription></Alert>;
+    } else if (filteredOffers.length === 0) {
+      content = <p className="text-sm text-muted-foreground text-center py-8">Nenhuma oferta encontrada para o filtro selecionado.</p>;
+    } else {
+      content = (
+        <div className="border rounded-md">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Título</TableHead>
+                <TableHead>Preço</TableHead>
+                <TableHead>Validade</TableHead>
+                <TableHead>Criado por</TableHead>
+                <TableHead>Categoria</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredOffers.map(offer => (
+                <TableRow key={offer.id}>
+                  <TableCell className="font-medium">{offer.title}</TableCell>
+                  <TableCell>{offer.price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</TableCell>
+                  <TableCell className={cn(isPast(new Date(offer.validUntil)) && "text-destructive")}>
+                    {format(new Date(offer.validUntil), 'dd/MM/yyyy')}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{offer.createdByName}</TableCell>
+                   <TableCell>
+                      <Badge variant="secondary">{offer.category}</Badge>
+                   </TableCell>
+                  <TableCell>{getStatusBadge(offer.status)}</TableCell>
+                  <TableCell className="text-right">
+                     <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" className="h-8 w-8 p-0" disabled={isPending}>
+                            <span className="sr-only">Abrir menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DropdownMenuItem onSelect={() => handleOpenOfferForm(offer)}>
+                                <Edit className="mr-2 h-4 w-4" /> Editar
+                            </DropdownMenuItem>
+                           <DropdownMenuSeparator />
+                           {offer.status !== 'approved' && (
+                               <DropdownMenuItem onSelect={() => handleOfferStatusChange(offer.id, 'approved')}>
+                                   <CheckCircle className="mr-2 h-4 w-4 text-green-500" /> Aprovar
+                               </DropdownMenuItem>
+                           )}
+                           {offer.status !== 'rejected' && (
+                               <DropdownMenuItem onSelect={() => handleOfferStatusChange(offer.id, 'rejected')}>
+                                   <XCircle className="mr-2 h-4 w-4 text-red-500" /> Rejeitar
+                               </DropdownMenuItem>
+                           )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onSelect={() => setOfferToDelete(offer)} className="text-destructive focus:text-destructive">
+                                <Trash2 className="mr-2 h-4 w-4" /> Deletar
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      );
+    }
+    
+    return (
+      <Card>
+        <CardHeader>
+           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+              <div>
+                <CardTitle>Gerenciamento de Ofertas</CardTitle>
+                <CardDescription>Aprove, edite ou delete as ofertas sugeridas pelos vendedores.</CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Select value={offerFilter} onValueChange={(value) => setOfferFilter(value as 'all' | OfferStatus)}>
+                    <SelectTrigger className="w-full sm:w-[180px]">
+                        <SelectValue placeholder="Filtrar por status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">Todas as Ofertas</SelectItem>
+                        <SelectItem value="pending">Pendentes</SelectItem>
+                        <SelectItem value="approved">Aprovadas</SelectItem>
+                        <SelectItem value="rejected">Rejeitadas</SelectItem>
+                    </SelectContent>
+                </Select>
+                <Button onClick={() => handleOpenOfferForm(null)}>
+                    <PlusCircle className="mr-2 h-4 w-4" />
+                    Criar Oferta
+                </Button>
+              </div>
+            </div>
+        </CardHeader>
+        <CardContent>
+          {content}
+        </CardContent>
+      </Card>
+    );
+  };
 
 
   return (
@@ -1286,10 +1474,11 @@ export default function AdminDashboardPage() {
 
         <main className="flex-1 container mx-auto p-4 sm:p-6 lg:p-8">
             <Tabs defaultValue="overview" className="space-y-4">
-              <TabsList>
+              <TabsList className="flex flex-wrap h-auto justify-start">
                 <TabsTrigger value="overview">Visão Geral e Usuários</TabsTrigger>
                 <TabsTrigger value="seller-data">Dados por Vendedor</TabsTrigger>
                 <TabsTrigger value="briefing">Briefing Geral</TabsTrigger>
+                <TabsTrigger value="offers">Ofertas</TabsTrigger>
                 <TabsTrigger value="groups">Gerenciamento de Grupos</TabsTrigger>
                 <TabsTrigger value="templates">Templates de Mensagem</TabsTrigger>
                 <TabsTrigger value="tags">Tags de Clientes</TabsTrigger>
@@ -1539,6 +1728,10 @@ export default function AdminDashboardPage() {
                   </CardContent>
                 </Card>
               </TabsContent>
+              
+              <TabsContent value="offers">
+                {renderOfferManagementContent()}
+              </TabsContent>
 
               <TabsContent value="briefing">
                 {renderAdminBriefingContent()}
@@ -1564,47 +1757,56 @@ export default function AdminDashboardPage() {
         </main>
       </div>
 
-      <UserEditDialog
+      {isEditUserOpen && <UserEditDialog
         isOpen={isEditUserOpen}
         onOpenChange={setIsEditUserOpen}
         user={editingUser}
         onUserUpdated={onDataUpdated}
-      />
+      />}
 
-      <UserGroupDialog
+      {isGroupDialogOpen && <UserGroupDialog
         isOpen={isGroupDialogOpen}
         onOpenChange={setIsGroupDialogOpen}
         user={userForGroupAssignment}
         groups={groups}
         onUserUpdated={onDataUpdated}
-      />
+      />}
 
-      <GroupEditDialog
+      {isEditGroupOpen && <GroupEditDialog
         isOpen={isEditGroupOpen}
         onOpenChange={setIsEditGroupOpen}
         group={editingGroup}
         onGroupUpdated={onDataUpdated}
-      />
+      />}
       
-      <TemplateEditDialog
+      {isEditTemplateOpen && <TemplateEditDialog
         isOpen={isEditTemplateOpen}
         onOpenChange={setIsEditTemplateOpen}
         template={editingTemplate}
         onTemplateUpdated={onDataUpdated}
-      />
+      />}
 
-      <TagEditDialog
+      {isEditTagOpen && <TagEditDialog
         isOpen={isEditTagOpen}
         onOpenChange={setIsEditTagOpen}
         tag={editingTag}
         onTagUpdated={onDataUpdated}
-      />
+      />}
+      
+      {isOfferFormOpen && <OfferForm
+        isOpen={isOfferFormOpen}
+        onOpenChange={setIsOfferFormOpen}
+        onDataUpdated={onDataUpdated}
+        currentUserProfile={userProfile}
+        offerToEdit={editingOffer}
+        isAdmin
+      />}
 
-      <SellerLeadsDialog
+      {viewingSellerLeads && <SellerLeadsDialog
         isOpen={!!viewingSellerLeads}
         onOpenChange={() => setViewingSellerLeads(null)}
         seller={viewingSellerLeads}
-      />
+      />}
 
       <AlertDialog open={!!userToDelete} onOpenChange={(open) => !open && setUserToDelete(null)}>
         <AlertDialogContent>
@@ -1701,6 +1903,26 @@ export default function AdminDashboardPage() {
                 className="bg-destructive hover:bg-destructive/90"
                 disabled={isPending}>
                 {isPending ? "Deletando..." : "Sim, deletar meta"}
+            </AlertDialogAction>
+            </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+       <AlertDialog open={!!offerToDelete} onOpenChange={(open) => !open && setOfferToDelete(null)}>
+        <AlertDialogContent>
+            <AlertDialogHeader>
+            <AlertDialogTitle>Deletar a oferta "{offerToDelete?.title}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+                Esta ação não pode ser desfeita e irá remover a oferta permanentemente.
+            </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setOfferToDelete(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction 
+                onClick={handleDeleteOffer} 
+                className="bg-destructive hover:bg-destructive/90"
+                disabled={isPending}>
+                {isPending ? "Deletando..." : "Sim, deletar"}
             </AlertDialogAction>
             </AlertDialogFooter>
         </AlertDialogContent>
