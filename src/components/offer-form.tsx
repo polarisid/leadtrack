@@ -24,14 +24,16 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Offer, OfferFormValues, OfferSchema, UserProfile, productCategories } from "@/lib/types";
 import { createOffer, updateOffer } from "@/app/actions";
-import { useTransition, useEffect } from "react";
+import { useTransition, useEffect, useState } from "react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { CalendarIcon } from "lucide-react";
+import { CalendarIcon, UploadCloud, X, Link as LinkIcon } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import Image from "next/image";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 interface OfferFormProps {
   isOpen: boolean;
@@ -45,6 +47,9 @@ interface OfferFormProps {
 export function OfferForm({ isOpen, onOpenChange, onDataUpdated, currentUserProfile, offerToEdit, isAdmin = false }: OfferFormProps) {
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
+  const [preview, setPreview] = useState<string | null>(null);
+  const [uploadMode, setUploadMode] = useState<'upload' | 'link'>('upload');
+
 
   const form = useForm<OfferFormValues>({
     resolver: zodResolver(OfferSchema),
@@ -59,6 +64,8 @@ export function OfferForm({ isOpen, onOpenChange, onDataUpdated, currentUserProf
     },
   });
 
+  const photoUrlValue = form.watch("photoUrl");
+
   useEffect(() => {
     if (offerToEdit && isOpen) {
       form.reset({
@@ -67,6 +74,11 @@ export function OfferForm({ isOpen, onOpenChange, onDataUpdated, currentUserProf
         validUntil: parseISO(offerToEdit.validUntil),
         category: offerToEdit.category,
       });
+      if (offerToEdit.photoUrl) {
+        setPreview(offerToEdit.photoUrl);
+        // Determine mode based on photoUrl content
+        setUploadMode(offerToEdit.photoUrl.startsWith('data:image') ? 'upload' : 'link');
+      }
     } else if (isOpen) {
       form.reset({
         title: "",
@@ -77,11 +89,23 @@ export function OfferForm({ isOpen, onOpenChange, onDataUpdated, currentUserProf
         validUntil: undefined,
         category: "Outros",
       });
+      setPreview(null);
+      setUploadMode('upload');
     }
   }, [offerToEdit, isOpen, form]);
+
+   useEffect(() => {
+    // Only update preview from photoUrlValue if it's a valid URL or data URI
+    if (photoUrlValue && (photoUrlValue.startsWith('http') || photoUrlValue.startsWith('data:image'))) {
+        setPreview(photoUrlValue);
+    } else if (!photoUrlValue) {
+        setPreview(null);
+    }
+  }, [photoUrlValue]);
   
   const handleClose = () => {
     form.reset();
+    setPreview(null);
     onOpenChange(false);
   }
 
@@ -105,6 +129,28 @@ export function OfferForm({ isOpen, onOpenChange, onDataUpdated, currentUserProf
         }
     });
   };
+  
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) { // 2MB limit
+        toast({ variant: "destructive", title: "Arquivo muito grande", description: "O tamanho máximo da imagem é 2MB." });
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        form.setValue("photoUrl", reader.result as string, { shouldValidate: true });
+        setPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    const sanitizedValue = value.replace("R$", "").trim().replace(/\./g, "").replace(",", ".");
+    form.setValue("price", parseFloat(sanitizedValue) || 0, { shouldValidate: true });
+  }
 
   const isEditMode = !!offerToEdit;
 
@@ -164,7 +210,7 @@ export function OfferForm({ isOpen, onOpenChange, onDataUpdated, currentUserProf
                     <FormItem>
                       <FormLabel>Preço à Vista (R$)</FormLabel>
                       <FormControl>
-                        <Input type="number" step="0.01" placeholder="1599.90" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} />
+                        <Input type="text" placeholder="1.599,90" value={field.value} onChange={handlePriceChange} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -238,19 +284,88 @@ export function OfferForm({ isOpen, onOpenChange, onDataUpdated, currentUserProf
                   )}
                 />
              </div>
-             <FormField
-                control={form.control}
-                name="photoUrl"
-                render={({ field }) => (
-                    <FormItem>
-                    <FormLabel>URL da Foto (Opcional)</FormLabel>
-                    <FormControl>
-                        <Input type="url" placeholder="https://exemplo.com/imagem.png" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                    </FormItem>
-                )}
-                />
+             
+             <FormItem>
+                <FormLabel>Arte da Oferta (Opcional)</FormLabel>
+                <Tabs value={uploadMode} onValueChange={(value) => setUploadMode(value as any)} className="w-full">
+                    <TabsList className="grid w-full grid-cols-2">
+                        <TabsTrigger value="upload">Fazer Upload</TabsTrigger>
+                        <TabsTrigger value="link">Usar um Link</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="upload">
+                         <FormField
+                            control={form.control}
+                            name="photoUrl"
+                            render={({ field }) => (
+                                <FormItem>
+                                <FormControl>
+                                <div className="relative flex items-center justify-center w-full">
+                                        <label htmlFor="file-upload" className="flex flex-col items-center justify-center w-full h-32 border-2 border-border border-dashed rounded-lg cursor-pointer bg-muted/50 hover:bg-muted">
+                                            {preview && uploadMode === 'upload' ? (
+                                                <>
+                                                    <Image src={preview} alt="Prévia da imagem" layout="fill" objectFit="contain" className="rounded-lg p-2" />
+                                                    <Button 
+                                                        variant="destructive" 
+                                                        size="icon" 
+                                                        className="absolute -top-2 -right-2 h-6 w-6 rounded-full z-10"
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            setPreview(null);
+                                                            field.onChange("");
+                                                        }}
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </Button>
+                                                </>
+                                            ) : (
+                                                <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                                    <UploadCloud className="w-8 h-8 mb-4 text-muted-foreground" />
+                                                    <p className="mb-2 text-sm text-muted-foreground"><span className="font-semibold">Clique para enviar</span> ou arraste</p>
+                                                    <p className="text-xs text-muted-foreground">PNG, JPG ou WEBP (Max. 2MB)</p>
+                                                </div>
+                                            )}
+                                            <Input id="file-upload" type="file" className="hidden" onChange={handleFileChange} accept="image/png, image/jpeg, image/webp" />
+                                        </label>
+                                    </div>
+                                </FormControl>
+                                <FormMessage />
+                                </FormItem>
+                            )}
+                            />
+                    </TabsContent>
+                    <TabsContent value="link">
+                        <FormField
+                        control={form.control}
+                        name="photoUrl"
+                        render={({ field }) => (
+                            <FormItem>
+                            <FormControl>
+                                <div className="relative">
+                                    <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        placeholder="https://exemplo.com/imagem.png"
+                                        {...field}
+                                        className="pl-10"
+                                        onChange={(e) => {
+                                            field.onChange(e.target.value);
+                                            setPreview(e.target.value);
+                                        }}
+                                     />
+                                </div>
+                            </FormControl>
+                            <FormMessage />
+                            </FormItem>
+                        )}
+                        />
+                        {preview && uploadMode === 'link' && (
+                             <div className="mt-4 relative w-full h-32">
+                                <Image src={preview} alt="Prévia do link" layout="fill" objectFit="contain" className="rounded-lg" />
+                             </div>
+                        )}
+                    </TabsContent>
+                </Tabs>
+             </FormItem>
+
 
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={handleClose}>Cancelar</Button>

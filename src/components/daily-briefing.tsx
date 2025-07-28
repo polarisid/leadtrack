@@ -11,6 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { AlertTriangle, Lightbulb, Loader2, Sparkles, CheckCircle, Target } from "lucide-react";
 import { Skeleton } from "./ui/skeleton";
 import { format, isToday, parseISO } from 'date-fns';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+
 
 export function DailyBriefing() {
   const { user, userProfile } = useAuth();
@@ -67,60 +69,69 @@ export function DailyBriefing() {
     
     if (summary) {
         return (
-            <CardContent className="space-y-6">
-                <p className="text-sm text-muted-foreground italic">"{summary.overview}"</p>
-                
-                {summary.dailyActions && summary.dailyActions.length > 0 && (
-                    <div>
-                        <h4 className="font-semibold mb-2 flex items-center gap-2"><Target className="h-4 w-4 text-green-500" /> Ações do Dia</h4>
-                        <ul className="space-y-2">
-                            {summary.dailyActions.map((action, index) => (
-                                <li key={index} className="flex items-start gap-3 text-sm">
-                                    <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
-                                    <span className="text-muted-foreground">{action}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                )}
-                
-                <div>
-                    <h4 className="font-semibold mb-2 flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /> Leads em Destaque</h4>
-                    <ul className="space-y-2">
-                        {summary.hotLeads.map((lead, index) => (
-                            <li key={index} className="flex items-start gap-3 text-sm">
-                                <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+            <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="item-1" className="border-b-0">
+                    <AccordionTrigger className="p-6 pt-0 hover:no-underline text-left">
+                        <div className="flex-1 text-sm text-muted-foreground italic">
+                            "{summary.overview}"
+                        </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="p-6 pt-0">
+                        <div className="space-y-6">
+                            {summary.dailyActions && summary.dailyActions.length > 0 && (
                                 <div>
-                                    <span className="font-semibold text-foreground">{lead.name}:</span>
-                                    <span className="text-muted-foreground ml-1">{lead.reason}</span>
+                                    <h4 className="font-semibold mb-2 flex items-center gap-2"><Target className="h-4 w-4 text-green-500" /> Ações do Dia</h4>
+                                    <ul className="space-y-2">
+                                        {summary.dailyActions.map((action, index) => (
+                                            <li key={index} className="flex items-start gap-3 text-sm">
+                                                <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                                                <span className="text-muted-foreground">{action}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
                                 </div>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
+                            )}
+                            
+                            <div>
+                                <h4 className="font-semibold mb-2 flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /> Leads em Destaque</h4>
+                                <ul className="space-y-2">
+                                    {summary.hotLeads.map((lead, index) => (
+                                        <li key={index} className="flex items-start gap-3 text-sm">
+                                            <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                                            <div>
+                                                <span className="font-semibold text-foreground">{lead.name}:</span>
+                                                <span className="text-muted-foreground ml-1">{lead.reason}</span>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
 
-                 <div>
-                    <h4 className="font-semibold mb-2 flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-500" /> Pontos de Atenção</h4>
-                    <ul className="space-y-2">
-                        {summary.leadsToWatch.map((lead, index) => (
-                            <li key={index} className="flex items-start gap-3 text-sm">
-                                <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-                                <div>
-                                    <span className="font-semibold text-foreground">{lead.name}:</span>
-                                    <span className="text-muted-foreground ml-1">{lead.reason}</span>
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
+                             <div>
+                                <h4 className="font-semibold mb-2 flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-500" /> Pontos de Atenção</h4>
+                                <ul className="space-y-2">
+                                    {summary.leadsToWatch.map((lead, index) => (
+                                        <li key={index} className="flex items-start gap-3 text-sm">
+                                            <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                                            <div>
+                                                <span className="font-semibold text-foreground">{lead.name}:</span>
+                                                <span className="text-muted-foreground ml-1">{lead.reason}</span>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
 
-                <div className="text-center pt-2">
-                     <Button variant="secondary" size="sm" onClick={handleGenerateSummary} disabled={isGenerating || hasTodaysSummary}>
-                        {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : hasTodaysSummary ? <CheckCircle className="mr-2 h-4 w-4" /> : null}
-                        {hasTodaysSummary ? "Briefing de hoje já gerado" : "Atualizar Briefing"}
-                    </Button>
-                </div>
-            </CardContent>
+                            <div className="text-center pt-2">
+                                 <Button variant="secondary" size="sm" onClick={handleGenerateSummary} disabled={isGenerating || hasTodaysSummary}>
+                                    {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : hasTodaysSummary ? <CheckCircle className="mr-2 h-4 w-4" /> : null}
+                                    {hasTodaysSummary ? "Briefing de hoje já gerado" : "Atualizar Briefing"}
+                                </Button>
+                            </div>
+                        </div>
+                    </AccordionContent>
+                </AccordionItem>
+            </Accordion>
         )
     }
 

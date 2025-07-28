@@ -9,7 +9,7 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { Client, Comment, MessageTemplate, Tag, LeadAnalysisOutput } from "@/lib/types";
+import { Client, Comment, MessageTemplate, Tag, LeadAnalysisOutput, ClientStatus, clientStatuses } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,6 +27,8 @@ import {
   Sparkles,
   Lightbulb,
   Copy,
+  FileText,
+  ChevronDown,
 } from "lucide-react";
 import { StatusBadge } from "./status-badge";
 import { format } from "date-fns";
@@ -42,6 +44,7 @@ import { WhatsappTemplateDialog } from "./whatsapp-template-dialog";
 import { Badge } from "./ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Skeleton } from "./ui/skeleton";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
 interface ClientDetailSheetProps {
   isOpen: boolean;
@@ -50,6 +53,8 @@ interface ClientDetailSheetProps {
   templates: MessageTemplate[];
   tags: Tag[];
   onClientUpdated: (client: Client) => void;
+  onOpenProposalDialog: (client: Client) => void;
+  onStatusChange: (client: Client, status: ClientStatus) => void;
 }
 
 export default function ClientDetailSheet({
@@ -59,6 +64,8 @@ export default function ClientDetailSheet({
   templates,
   tags,
   onClientUpdated,
+  onOpenProposalDialog,
+  onStatusChange,
 }: ClientDetailSheetProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -256,10 +263,16 @@ export default function ClientDetailSheet({
                         <Sparkles className="h-5 w-5 text-primary" />
                         Análise com IA
                     </h3>
-                    <Button size="sm" onClick={handleAnalyzeLead} disabled={isAnalyzing}>
-                        {isAnalyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Analisar Lead
-                    </Button>
+                    <div className="flex items-center gap-2">
+                         <Button size="sm" variant="outline" onClick={() => onOpenProposalDialog(client)}>
+                            <FileText className="mr-2 h-4 w-4" />
+                            Gerar Proposta
+                        </Button>
+                        <Button size="sm" onClick={handleAnalyzeLead} disabled={isAnalyzing}>
+                            {isAnalyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Analisar Lead
+                        </Button>
+                    </div>
                 </div>
                 {isAnalyzing ? (
                      <div className="space-y-4">
@@ -390,10 +403,25 @@ export default function ClientDetailSheet({
             </div>
           </ScrollArea>
 
-          <SheetFooter className="p-6 pt-4 mt-auto border-t">
+          <SheetFooter className="p-6 pt-4 mt-auto border-t flex-row justify-between">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button>Mudar Status <ChevronDown className="ml-2 h-4 w-4" /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {clientStatuses.map((status) => (
+                  <DropdownMenuItem
+                    key={status}
+                    disabled={client.status === status}
+                    onSelect={() => onStatusChange(client, status)}
+                  >
+                    {status}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               onClick={() => onOpenChange(false)}
-              className="w-full"
               variant="outline"
             >
               Fechar

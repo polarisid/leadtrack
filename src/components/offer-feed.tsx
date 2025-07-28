@@ -13,7 +13,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Flame, PlusCircle, CheckCircle, Clock, Share2 } from 'lucide-react';
+import { Flame, PlusCircle, CheckCircle, Clock, Share2, Copy } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { toggleOfferLike } from '@/app/actions';
 import { cn } from '@/lib/utils';
@@ -67,6 +67,14 @@ export function OfferFeed({ offers, isLoading, onOfferCreated, onOfferLiked, cur
   
   const handleShareClick = (offer: Offer) => {
     setOfferToShare(offer);
+  };
+  
+  const handleCopy = (textToCopy: string, fieldName: string) => {
+    navigator.clipboard.writeText(textToCopy).then(() => {
+        toast({ title: `${fieldName} copiado!`, description: `O ${fieldName.toLowerCase()} foi copiado para sua área de transferência.` });
+    }, () => {
+        toast({ variant: "destructive", title: "Erro", description: `Não foi possível copiar o ${fieldName.toLowerCase()}.` });
+    });
   };
 
   return (
@@ -126,11 +134,26 @@ export function OfferFeed({ offers, isLoading, onOfferCreated, onOfferLiked, cur
                             <CardHeader>
                                 {offer.category && <Badge variant="secondary" className='mb-2 w-fit'>{offer.category}</Badge>}
                                 <CardTitle>{offer.title}</CardTitle>
-                                {offer.sku && <CardDescription>SKU: {offer.sku}</CardDescription>}
+                                {offer.sku && (
+                                    <div className="flex items-center gap-2">
+                                        <CardDescription>SKU: {offer.sku}</CardDescription>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleCopy(offer.sku, 'SKU')}>
+                                            <Copy className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                )}
                             </CardHeader>
                             <CardContent className="flex-grow space-y-2">
                                <p className="text-3xl font-bold">{offer.price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
-                               {offer.coupon && <p className="text-sm">Use o cupom: <span className="font-semibold p-1 rounded bg-secondary">{offer.coupon}</span></p>}
+                               {offer.coupon && (
+                                   <div className="flex items-center gap-2 text-sm">
+                                       <span>Use o cupom:</span>
+                                       <span className="font-semibold p-1 rounded bg-secondary">{offer.coupon}</span>
+                                       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleCopy(offer.coupon, 'Cupom')}>
+                                           <Copy className="h-3 w-3" />
+                                       </Button>
+                                   </div>
+                               )}
                                <div className={cn("flex items-center text-sm", isExpired ? 'text-destructive' : 'text-muted-foreground')}>
                                   <Clock className="mr-2 h-4 w-4" />
                                   <span>Válido até: {format(new Date(offer.validUntil), 'dd/MM/yyyy')}</span>

@@ -1,17 +1,12 @@
 
 
-
-
-
-
-
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput, ProposalTextGeneratorInput, ProposalTextGeneratorOutput, BrandingSettings } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction, arrayUnion } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction, arrayUnion, setDoc } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { subDays, format, parseISO, startOfWeek, endOfWeek, subWeeks, isWithinInterval, startOfDay, endOfDay, startOfMonth, addDays, subHours, endOfMonth, subMonths, startOfYear, endOfYear, subYears, addMonths, isAfter, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -315,7 +310,7 @@ export async function updateClient(id: string, data: unknown, userId: string) {
     }
 }
 
-export async function updateClientStatus(id: string, status: ClientStatus, userId: string, saleValue?: number) {
+export async function updateClientStatus(id: string, status: ClientStatus, userId: string, saleValue?: number, productInfo?: string) {
     if (!userId) {
         return { error: 'Usuário não autenticado' };
     }
@@ -346,7 +341,11 @@ export async function updateClientStatus(id: string, status: ClientStatus, userI
                 saleValue: saleValue,
             });
 
-            const commentText = `Venda registrada no valor de ${saleValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`;
+            let commentText = `Venda registrada no valor de ${saleValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`;
+            if (productInfo) {
+                commentText += `\nProduto(s) vendido(s): ${productInfo}`;
+            }
+
             const commentsRef = collection(db, 'clients', id, 'comments');
             const commentDocRef = doc(commentsRef);
             batch.set(commentDocRef, {
@@ -2393,4 +2392,38 @@ export async function toggleOfferLike(offerId: string, userId: string) {
 
 export async function generateOfferShareTextAction(input: OfferTextGeneratorInput): Promise<OfferTextGeneratorOutput> {
     return await generateOfferShareText(input);
+}
+
+// ======== Branding Actions ========
+
+export async function getBrandingSettings(): Promise<BrandingSettings | null> {
+    if (!db) return null;
+    
+    try {
+        const settingsRef = doc(db, 'settings', 'branding');
+        const docSnap = await getDoc(settingsRef);
+        if (docSnap.exists()) {
+            return docSnap.data() as BrandingSettings;
+        }
+        return null;
+    } catch (e: any) {
+        console.error("Error fetching branding settings:", e.message);
+        return null;
+    }
+}
+
+export async function updateBrandingSettings(adminId: string, settings: BrandingSettings) {
+    if (!db) return { success: false, error: 'Firebase não está configurado.' };
+    if (!await isAdmin(adminId)) {
+        return { success: false, error: 'Acesso negado.' };
+    }
+
+    try {
+        const settingsRef = doc(db, 'settings', 'branding');
+        await setDoc(settingsRef, settings, { merge: true });
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao salvar configurações de marca.' };
+    }
 }

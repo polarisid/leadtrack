@@ -66,6 +66,7 @@ import {
   MessageSquare,
   Tag as TagIcon,
   Flame,
+  FileText,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead, getTags, updateClientTags, getOffers } from '@/app/actions';
@@ -96,6 +97,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { SellerPerformanceView } from './seller-performance-view';
 import { OfferFeed } from './offer-feed';
 import { Badge } from './ui/badge';
+import { ProposalFormDialog } from './proposal-form-dialog';
 
 
 export function ClientsView() {
@@ -115,6 +117,7 @@ export function ClientsView() {
   
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [isDetailSheetOpen, setIsDetailSheetOpen] = useState(false);
+  const [clientForProposal, setClientForProposal] = useState<Client | null>(null);
 
   const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
   const [isLoadingRecentSales, setIsLoadingRecentSales] = useState(true);
@@ -185,7 +188,7 @@ export function ClientsView() {
   }, [fetchGroupLeads]);
 
   useEffect(() => {
-    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
+    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
     audio.preload = 'auto';
     audioRef.current = audio;
   }, []);
@@ -208,7 +211,7 @@ export function ClientsView() {
       if (sortOrder === 'updatedAtAsc') {
         return dateA - dateB;
       }
-      return dateB - dateA;
+      return dateB - a;
     });
   }, [clients, searchTerm, statusFilter, productFilter, sortOrder]);
 
@@ -238,6 +241,10 @@ export function ClientsView() {
     }
   }, []);
 
+  const handleOpenProposalDialog = useCallback((client: Client) => {
+    setClientForProposal(client);
+  }, []);
+
 
   const handleStatusChange = (client: Client, newStatus: ClientStatus) => {
     if (!user) return;
@@ -247,7 +254,7 @@ export function ClientsView() {
     } else {
         startTransition(async () => {
             const originalClients = [...clients];
-            setClients(prev => prev.map(c => c.id === client.id ? {...c, status: newStatus} : c));
+            setClients(prev => prev.map(c => c.id === client.id ? {...c, status: newStatus, updatedAt: new Date().toISOString()} : c));
 
             const result = await updateClientStatus(client.id, newStatus, user.uid);
             if (result.success) {
@@ -297,7 +304,7 @@ export function ClientsView() {
     });
   };
 
-  const handleConfirmSale = (saleValue: number) => {
+  const handleConfirmSale = (saleValue: number, productInfo: string) => {
     if (!saleValueClient || !user) return;
 
     startTransition(async () => {
@@ -307,7 +314,7 @@ export function ClientsView() {
         setClients(prev => prev.map(c => c.id === clientId ? {...c, status: 'Fechado'} : c));
         setSaleValueClient(null);
 
-        const result = await updateClientStatus(clientId, 'Fechado', user.uid, saleValue);
+        const result = await updateClientStatus(clientId, 'Fechado', user.uid, saleValue, productInfo);
 
         if (result.success) {
             toast({ title: 'Venda registrada com sucesso!' });
@@ -428,17 +435,17 @@ export function ClientsView() {
                     </h1>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button onClick={handleAddClient} size="sm">
-                        <PlusCircle className="mr-2 h-4 w-4" />
-                        Adicionar
+                    <Button onClick={handleAddClient} size="sm" className="px-3">
+                        <PlusCircle className="h-4 w-4 md:mr-2" />
+                        <span className="hidden md:inline">Adicionar</span>
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => setIsImportOpen(true)}>
-                      <Upload className="mr-2 h-4 w-4"/>
-                      Importar
+                    <Button variant="outline" size="sm" onClick={() => setIsImportOpen(true)} className="px-3">
+                      <Upload className="h-4 w-4 md:mr-2"/>
+                      <span className="hidden md:inline">Importar</span>
                     </Button>
-                    <Button variant="outline" size="sm" onClick={handleExport}>
-                      <Download className="mr-2 h-4 w-4"/>
-                      Exportar
+                    <Button variant="outline" size="sm" onClick={handleExport} className="px-3">
+                      <Download className="h-4 w-4 md:mr-2"/>
+                       <span className="hidden md:inline">Exportar</span>
                     </Button>
                     <Button variant="ghost" size="icon" onClick={handleLogout} title="Sair">
                         <LogOut className="h-5 w-5" />
@@ -450,31 +457,37 @@ export function ClientsView() {
 
       <main className="flex-1 container mx-auto p-4 sm:p-6 lg:p-8">
         <Tabs defaultValue="clientes" className="w-full">
-            <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto mb-6">
-                <TabsTrigger value="clientes">
-                    <LayoutGrid className="mr-2 h-4 w-4" />
-                    Meus Clientes
-                    <Badge variant="secondary" className="ml-2 rounded-full">{filteredClients.length}</Badge>
+             <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto mb-6 h-auto">
+                <TabsTrigger value="clientes" className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
+                    <LayoutGrid className="h-5 w-5" />
+                    <span className="hidden sm:inline">Clientes</span>
+                    <Badge variant="secondary" className="ml-0 sm:ml-2 rounded-full">{filteredClients.length}</Badge>
                 </TabsTrigger>
-                 <TabsTrigger value="offers">
-                    <Flame className="mr-2 h-4 w-4" />
-                    Feed de Ofertas
+                 <TabsTrigger value="offers" className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
+                    <Flame className="h-5 w-5" />
+                    <span className="hidden sm:inline">Ofertas</span>
+                     <Badge
+                        variant={offers.length > 0 ? 'default' : 'secondary'}
+                        className="ml-0 sm:ml-2 rounded-full"
+                    >
+                        {offers.length}
+                    </Badge>
                 </TabsTrigger>
-                <TabsTrigger value="grupo" disabled={!userProfile?.groupId}>
-                    <Users className="mr-2 h-4 w-4" />
-                    Leads do Grupo
+                <TabsTrigger value="grupo" disabled={!userProfile?.groupId} className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
+                    <Users className="h-5 w-5" />
+                    <span className="hidden sm:inline">Grupo</span>
                     {userProfile?.groupId && (
                         <Badge
                             variant={unclaimedLeads.length > 0 ? 'default' : 'secondary'}
-                            className="ml-2 rounded-full"
+                            className="ml-0 sm:ml-2 rounded-full"
                         >
                             {unclaimedLeads.length}
                         </Badge>
                     )}
                 </TabsTrigger>
-                <TabsTrigger value="resultados">
-                    <BarChart2 className="mr-2 h-4 w-4" />
-                    Resultados
+                <TabsTrigger value="resultados" className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
+                    <BarChart2 className="h-5 w-5" />
+                    <span className="hidden sm:inline">Resultados</span>
                 </TabsTrigger>
             </TabsList>
 
@@ -666,6 +679,10 @@ export function ClientsView() {
                                                     <Edit className="mr-2 h-4 w-4" />
                                                     <span>Editar</span>
                                                 </DropdownMenuItem>
+                                                <DropdownMenuItem onSelect={() => setClientForProposal(client)}>
+                                                    <FileText className="mr-2 h-4 w-4" />
+                                                    <span>Gerar Proposta</span>
+                                                </DropdownMenuItem>
                                                 <DropdownMenuSub>
                                                 <DropdownMenuSubTrigger>Mudar Status</DropdownMenuSubTrigger>
                                                 <DropdownMenuPortal>
@@ -739,9 +756,9 @@ export function ClientsView() {
                                     className={cn("cursor-pointer", isInactive && "bg-red-100/50 dark:bg-red-900/20 border-red-200 dark:border-red-900/50")}
                                 >
                                     <CardHeader>
-                                        <div className="flex justify-between items-start">
-                                            <div className={cn(isInactive && "text-red-900 dark:text-red-200")}>
-                                                <CardTitle>{client.name}</CardTitle>
+                                        <div className="flex justify-between items-start gap-4">
+                                            <div className={cn("flex-1 min-w-0", isInactive && "text-red-900 dark:text-red-200")}>
+                                                <CardTitle className="break-words">{client.name}</CardTitle>
                                                 <div className="flex flex-wrap gap-1 mt-2">
                                                     {clientTags.map(tag => (
                                                         <Badge key={tag.id} variant="secondary" style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40`}} className="font-normal">
@@ -755,7 +772,7 @@ export function ClientsView() {
                                             <div onClick={(e) => e.stopPropagation()}>
                                             <DropdownMenu>
                                             <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" className="h-8 w-8 p-0" disabled={isPending}>
+                                                <Button variant="ghost" className="h-8 w-8 p-0 flex-shrink-0" disabled={isPending}>
                                                 <span className="sr-only">Abrir menu</span>
                                                 <MoreHorizontal className="h-4 w-4" />
                                                 </Button>
@@ -765,6 +782,10 @@ export function ClientsView() {
                                                 <DropdownMenuItem onSelect={() => handleEditClient(client)}>
                                                     <Edit className="mr-2 h-4 w-4" />
                                                     <span>Editar</span>
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onSelect={() => setClientForProposal(client)}>
+                                                    <FileText className="mr-2 h-4 w-4" />
+                                                    <span>Gerar Proposta</span>
                                                 </DropdownMenuItem>
                                                 <DropdownMenuSub>
                                                 <DropdownMenuSubTrigger>Mudar Status</DropdownMenuSubTrigger>
@@ -817,27 +838,29 @@ export function ClientsView() {
                                         </div>
                                     </CardHeader>
                                     <CardContent className="space-y-2 text-sm">
-                                        <div className="flex items-center gap-2 text-muted-foreground">
-                                            <MapPin className="h-4 w-4"/>
-                                            <span>{client.city}</span>
+                                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-muted-foreground">
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <MapPin className="h-4 w-4 flex-shrink-0 mt-0.5"/>
+                                                <span className="break-words">{client.city}</span>
+                                            </div>
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <Phone className="h-4 w-4 flex-shrink-0 mt-0.5"/>
+                                                <span className="break-words">{client.contact}</span>
+                                            </div>
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <ShoppingBag className="h-4 w-4 flex-shrink-0 mt-0.5"/>
+                                                <span className="break-words">{client.desiredProduct}</span>
+                                            </div>
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <Clock className="h-4 w-4 flex-shrink-0 mt-0.5"/>
+                                                <span className="break-words">
+                                                    {client.updatedAt ? formatDistanceToNow(new Date(client.updatedAt), { addSuffix: true, locale: ptBR }) : '-'}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center gap-2 text-muted-foreground">
-                                            <Phone className="h-4 w-4"/>
-                                            <span>{client.contact}</span>
-                                        </div>
-                                        <div className="flex items-center gap-2 text-muted-foreground">
-                                            <ShoppingBag className="h-4 w-4"/>
-                                            <span>{client.desiredProduct}</span>
-                                        </div>
-                                        <div className="flex items-center gap-2 text-muted-foreground">
-                                            <MessageSquare className="h-4 w-4"/>
-                                            <span className="truncate" title={client.remarketingReminder}>{client.remarketingReminder || '-'}</span>
-                                        </div>
-                                        <div className="flex items-center gap-2 text-muted-foreground">
-                                            <Clock className="h-4 w-4"/>
-                                            <span>
-                                                {client.updatedAt ? formatDistanceToNow(new Date(client.updatedAt), { addSuffix: true, locale: ptBR }) : '-'}
-                                            </span>
+                                        <div className="flex items-start gap-2 text-muted-foreground pt-2 min-w-0">
+                                            <MessageSquare className="h-4 w-4 flex-shrink-0 mt-0.5"/>
+                                            <p className="break-words" title={client.remarketingReminder}>{client.remarketingReminder || 'Nenhum lembrete'}</p>
                                         </div>
                                     </CardContent>
                                 </Card>
@@ -946,8 +969,16 @@ export function ClientsView() {
         templates={messageTemplates}
         tags={tags}
         onClientUpdated={handleClientUpdated}
+        onOpenProposalDialog={handleOpenProposalDialog}
+        onStatusChange={handleStatusChange}
       />
       
+      <ProposalFormDialog
+        isOpen={!!clientForProposal}
+        onOpenChange={(open) => !open && setClientForProposal(null)}
+        client={clientForProposal}
+      />
+
       <SaleValueDialog
         isOpen={!!saleValueClient}
         onOpenChange={(open) => !open && setSaleValueClient(null)}

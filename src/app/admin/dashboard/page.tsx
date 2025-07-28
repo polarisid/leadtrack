@@ -15,10 +15,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon, Sparkles, BrainCircuit, Lightbulb, Flame, CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react';
+import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon, Sparkles, BrainCircuit, Lightbulb, Flame, CheckCircle, XCircle, Clock, Loader2, Brush, UploadCloud, Link as LinkIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag, getAdminDailySummaryAction, getAllOffersForAdmin, updateOfferStatus, deleteOffer } from '@/app/actions';
-import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag, AdminDailySummaryOutput, Offer, OfferStatus, OfferFormValues, ProductCategory } from '@/lib/types';
+import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag, getAdminDailySummaryAction, getAllOffersForAdmin, updateOfferStatus, deleteOffer, updateBrandingSettings, getBrandingSettings } from '@/app/actions';
+import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag, AdminDailySummaryOutput, Offer, OfferStatus } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -66,6 +66,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { format, subMonths, isPast } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import Image from "next/image";
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
@@ -74,6 +75,7 @@ import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tool
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 const UserEditDialog = dynamic(() => import('@/components/admin/user-edit-dialog').then(mod => mod.UserEditDialog));
 const UserGroupDialog = dynamic(() => import('@/components/admin/user-group-dialog').then(mod => mod.UserGroupDialog));
@@ -212,6 +214,11 @@ export default function AdminDashboardPage() {
   const [adminSummary, setAdminSummary] = useState<AdminDailySummaryOutput | null>(null);
   const [isGeneratingAdminSummary, setIsGeneratingAdminSummary] = useState(false);
   const [adminSummaryError, setAdminSummaryError] = useState<string | null>(null);
+  
+  const [logoUrl, setLogoUrl] = useState('');
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [uploadMode, setUploadMode] = useState<'upload' | 'link'>('upload');
+  const [companyName, setCompanyName] = useState('');
 
 
   const periodMap = { weekly: 'Semana', monthly: 'Mês', yearly: 'Ano' };
@@ -331,6 +338,23 @@ export default function AdminDashboardPage() {
         })
         .finally(() => setIsLoadingGoals(false));
   };
+  
+  const fetchBranding = () => {
+      if (!user) return;
+      getBrandingSettings()
+        .then(settings => {
+            if (settings?.logoUrl) {
+                setLogoUrl(settings.logoUrl);
+                setLogoPreview(settings.logoUrl);
+            }
+            if (settings?.companyName) {
+                setCompanyName(settings.companyName);
+            }
+        })
+        .catch(err => {
+            console.warn("Could not fetch branding settings:", err.message);
+        });
+  }
 
   useEffect(() => {
     if (user?.uid) {
@@ -338,6 +362,7 @@ export default function AdminDashboardPage() {
         fetchTemplates();
         fetchTags();
         fetchOffers();
+        fetchBranding();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -416,6 +441,7 @@ export default function AdminDashboardPage() {
     fetchTags();
     fetchGoals();
     fetchOffers();
+    fetchBranding();
   };
   
   const handleSendPasswordReset = (email: string) => {
@@ -648,6 +674,34 @@ export default function AdminDashboardPage() {
       })
       .finally(() => setIsGeneratingAdminSummary(false));
   };
+
+  const handleLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 1 * 1024 * 1024) { // 1MB limit for logo
+        toast({ variant: "destructive", title: "Arquivo muito grande", description: "O tamanho máximo do logo é 1MB." });
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setLogoUrl(reader.result as string);
+        setLogoPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveBranding = () => {
+    if (!user) return;
+    startTransition(async () => {
+        const result = await updateBrandingSettings(user.uid, { logoUrl, companyName });
+        if (result.success) {
+            toast({ title: 'Sucesso!', description: 'Configurações de marca atualizadas.' });
+        } else {
+            toast({ variant: 'destructive', title: 'Erro', description: result.error });
+        }
+    });
+  }
 
 
   const renderUsersContent = () => {
@@ -1449,6 +1503,87 @@ export default function AdminDashboardPage() {
       </Card>
     );
   };
+  
+  const renderBrandingContent = () => {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Customização da Marca</CardTitle>
+          <CardDescription>
+            Personalize a aparência das suas propostas e outros materiais.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="companyName">Nome da Empresa (para Propostas)</Label>
+              <Input
+                id="companyName"
+                placeholder="Ex: Minha Loja Incrível"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+              />
+               <p className="text-sm text-muted-foreground">
+                Este nome será usado no cabeçalho das propostas em PDF se nenhum logo for enviado.
+              </p>
+            </div>
+             <div className="space-y-2">
+                <Label>Logo da Empresa</Label>
+                <p className="text-sm text-muted-foreground">
+                    Faça o upload de uma imagem ou cole um link externo. Recomendamos um logo com fundo transparente (PNG) e com no máximo 500px de largura.
+                </p>
+             </div>
+          </div>
+          <Tabs value={uploadMode} onValueChange={(value) => setUploadMode(value as any)} className="w-full max-w-lg">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="upload">Fazer Upload</TabsTrigger>
+              <TabsTrigger value="link">Usar um Link</TabsTrigger>
+            </TabsList>
+            <TabsContent value="upload">
+              <div className="relative flex items-center justify-center w-full mt-2">
+                <label htmlFor="logo-upload" className="flex flex-col items-center justify-center w-full h-32 border-2 border-border border-dashed rounded-lg cursor-pointer bg-muted/50 hover:bg-muted">
+                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                        <UploadCloud className="w-8 h-8 mb-4 text-muted-foreground" />
+                        <p className="mb-2 text-sm text-muted-foreground"><span className="font-semibold">Clique para enviar</span> ou arraste</p>
+                        <p className="text-xs text-muted-foreground">PNG, JPG ou WEBP (Max. 1MB)</p>
+                    </div>
+                    <Input id="logo-upload" type="file" className="hidden" onChange={handleLogoFileChange} accept="image/png, image/jpeg, image/webp" />
+                </label>
+              </div>
+            </TabsContent>
+            <TabsContent value="link">
+              <div className="relative mt-2">
+                  <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                      placeholder="https://exemplo.com/imagem.png"
+                      value={logoUrl.startsWith('data:image') ? '' : logoUrl}
+                      onChange={(e) => {
+                          setLogoUrl(e.target.value);
+                          setLogoPreview(e.target.value);
+                      }}
+                      className="pl-10"
+                    />
+              </div>
+            </TabsContent>
+          </Tabs>
+           {logoPreview && (
+                <div className="mt-4 space-y-2">
+                    <Label>Pré-visualização do Logo</Label>
+                    <div className="relative w-full h-32 p-4 border rounded-md flex items-center justify-center bg-muted/20">
+                    <Image src={logoPreview} alt="Prévia do logo" layout="fill" objectFit="contain" className="rounded-lg" />
+                    </div>
+                </div>
+            )}
+        </CardContent>
+        <CardFooter>
+          <Button onClick={handleSaveBranding} disabled={isPending}>
+            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Salvar Customizações
+          </Button>
+        </CardFooter>
+      </Card>
+    );
+  };
 
 
   return (
@@ -1479,10 +1614,11 @@ export default function AdminDashboardPage() {
                 <TabsTrigger value="seller-data">Dados por Vendedor</TabsTrigger>
                 <TabsTrigger value="briefing">Briefing Geral</TabsTrigger>
                 <TabsTrigger value="offers">Ofertas</TabsTrigger>
+                <TabsTrigger value="goals">Metas</TabsTrigger>
                 <TabsTrigger value="groups">Gerenciamento de Grupos</TabsTrigger>
                 <TabsTrigger value="templates">Templates de Mensagem</TabsTrigger>
                 <TabsTrigger value="tags">Tags de Clientes</TabsTrigger>
-                <TabsTrigger value="goals">Metas</TabsTrigger>
+                <TabsTrigger value="customization">Customização</TabsTrigger>
               </TabsList>
               
               <TabsContent value="overview" className="space-y-8">
@@ -1737,6 +1873,10 @@ export default function AdminDashboardPage() {
                 {renderAdminBriefingContent()}
               </TabsContent>
 
+              <TabsContent value="goals">
+                {renderGoalsManagementContent()}
+              </TabsContent>
+
               <TabsContent value="groups">
                 {renderGroupManagementContent()}
               </TabsContent>
@@ -1748,9 +1888,9 @@ export default function AdminDashboardPage() {
               <TabsContent value="tags">
                 {renderTagManagementContent()}
               </TabsContent>
-
-              <TabsContent value="goals">
-                {renderGoalsManagementContent()}
+              
+              <TabsContent value="customization">
+                {renderBrandingContent()}
               </TabsContent>
 
             </Tabs>

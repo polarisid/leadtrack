@@ -1,4 +1,5 @@
 
+
 import { z } from 'zod';
 
 export const productCategories = ['Eletrodomésticos', 'TV e AV', 'Telefonia', 'Informática', 'Outros'] as const;
@@ -30,6 +31,26 @@ export const OfferSchema = z.object({
   category: z.enum(productCategories, { required_error: "A categoria é obrigatória." }),
 });
 export type OfferFormValues = z.infer<typeof OfferSchema>;
+
+const ProductSchema = z.object({
+  name: z.string().min(1, "O nome do produto não pode ser vazio."),
+  sku: z.string().optional(),
+  cashPrice: z.number().positive("O valor à vista deve ser positivo."),
+  installmentPriceTotal: z.number().positive("O valor a prazo deve ser positivo.").optional(),
+  installments: z.number().int().positive("O número de parcelas deve ser positivo.").optional(),
+}).refine(data => {
+    // Se um campo de parcela for preenchido, o outro também deve ser.
+    return (data.installments && data.installmentPriceTotal) || (!data.installments && !data.installmentPriceTotal);
+}, {
+    message: "Preencha o valor a prazo e o n° de parcelas.",
+    path: ["installments"],
+});
+
+export const ProposalSchema = z.object({
+  products: z.array(ProductSchema).min(1, "Adicione pelo menos um produto."),
+  proposalDate: z.date(),
+});
+export type ProposalFormValues = z.infer<typeof ProposalSchema>;
 
 
 // AI Related Schemas
@@ -118,6 +139,25 @@ export const OfferTextGeneratorOutputSchema = z.object({
     text: z.string().describe('Uma mensagem curta, amigável e persuasiva para o WhatsApp. Use o placeholder <cliente> para o nome do cliente. Inclua emojis para deixar a mensagem mais atrativa.'),
 });
 export type OfferTextGeneratorOutput = z.infer<typeof OfferTextGeneratorOutputSchema>;
+
+const ProposalProductSchema = z.object({
+  name: z.string().describe('O nome do produto.'),
+  sku: z.string().optional().describe('O SKU do produto, se houver.'),
+  cashPrice: z.number().describe('O valor do produto para pagamento à vista.'),
+  installmentPriceTotal: z.number().optional().describe('O valor total do produto para pagamento a prazo.'),
+  installments: z.number().optional().describe('O número de parcelas para o pagamento a prazo.'),
+});
+
+export const ProposalTextGeneratorInputSchema = z.object({
+    products: z.array(ProposalProductSchema).describe('Uma lista com os produtos da proposta e seus detalhes.'),
+    proposalDate: z.string().describe('A data em que a proposta foi gerada (string formatada).'),
+});
+export type ProposalTextGeneratorInput = z.infer<typeof ProposalTextGeneratorInputSchema>;
+
+export const ProposalTextGeneratorOutputSchema = z.object({
+    text: z.string().describe('O texto completo da proposta comercial, formatado para ser enviado ao cliente. Use o placeholder <cliente>.'),
+});
+export type ProposalTextGeneratorOutput = z.infer<typeof ProposalTextGeneratorOutputSchema>;
 
 
 export interface Client {
@@ -227,6 +267,11 @@ export interface Offer {
   createdByName: string;
   likedBy: string[];
   createdAt: string;
+}
+
+export interface BrandingSettings {
+    logoUrl?: string;
+    companyName?: string;
 }
 
 
