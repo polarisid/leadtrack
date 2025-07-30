@@ -35,6 +35,7 @@ export type OfferFormValues = z.infer<typeof OfferSchema>;
 const ProductSchema = z.object({
   name: z.string().min(1, "O nome do produto não pode ser vazio."),
   sku: z.string().optional(),
+  photoUrl: z.string().optional(),
   cashPrice: z.number().positive("O valor à vista deve ser positivo."),
   installmentPriceTotal: z.number().positive("O valor a prazo deve ser positivo.").optional(),
   installments: z.number().int().positive("O número de parcelas deve ser positivo.").optional(),
