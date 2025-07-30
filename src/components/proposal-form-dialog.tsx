@@ -12,18 +12,21 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Client, ProposalFormValues, ProposalSchema } from "@/lib/types";
-import { Loader2, Trash2, PlusCircle, FileDown, UploadCloud, X, Link as LinkIcon } from "lucide-react";
-import { useForm, useFieldArray } from "react-hook-form";
+import { Client, ProposalFormValues, ProposalSchema, InstallationService } from "@/lib/types";
+import { Loader2, Trash2, PlusCircle, FileDown, UploadCloud, X, Wrench, Check } from "lucide-react";
+import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "./ui/form";
 import { Input } from "./ui/input";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { useAuth } from "@/context/auth-context";
-import { getBrandingSettings } from "@/app/actions";
+import { getBrandingSettings, getInstallationServices } from "@/app/actions";
 import { Skeleton } from "./ui/skeleton";
 import Image from "next/image";
+import { Checkbox } from "./ui/checkbox";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
+import { Textarea } from "./ui/textarea";
 
 
 interface ProposalFormDialogProps {
@@ -35,22 +38,32 @@ interface ProposalFormDialogProps {
 export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFormDialogProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { user, userProfile } = useAuth();
+  const { userProfile } = useAuth();
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [isBrandingLoading, setIsBrandingLoading] = useState(true);
+  const [availableServices, setAvailableServices] = useState<InstallationService[]>([]);
+
+  const wrenchIconBase64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLXdyZW5jaCI+PHBhdGggZD0iTTIuOSA2LjFsMi0yTDcuMyA3LjVsNiA5bC0zLTN6Ii8+PHBhdGggZD0iTTEzIDEzbGw2IDZjMSAxIDIuNSAxIDQgMGwxLjgtMS44Yy41LS40LjUtMS4xIDAtMS41TDE4IDEybC01LTUgMS0xTDMgMyAxIDEzLjVMMTggMThjLjQuNC40IDEgMCAxLjVsLTEuOCAxLjhjLTEgMS0yLjUgMS00IDBsLTYtNnoiLz48cGF0aCBkPSJtMTIuNSA4LjUtNS40IDUuNCIvPjwvc3ZnPg==";
 
   const form = useForm<ProposalFormValues>({
     resolver: zodResolver(ProposalSchema),
     defaultValues: {
         products: [{ name: "", cashPrice: 0, photoUrl: "" }],
         proposalDate: new Date(),
+        includedServices: [],
+        observations: "",
     },
   });
 
   const { fields, append, remove } = useFieldArray({
     control: form.control,
     name: "products",
+  });
+  
+  const { fields: serviceFields, append: appendService, remove: removeService } = useFieldArray({
+      control: form.control,
+      name: "includedServices",
   });
 
   useEffect(() => {
@@ -59,6 +72,8 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
       form.reset({
         products: [{ name: "", cashPrice: 0, sku: "", installmentPriceTotal: undefined, installments: undefined, photoUrl: "" }],
         proposalDate: new Date(),
+        includedServices: [],
+        observations: "",
       });
       getBrandingSettings().then(settings => {
           if(settings?.logoUrl) {
@@ -72,6 +87,7 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
       }).finally(() => {
           setIsBrandingLoading(false);
       });
+      getInstallationServices().then(setAvailableServices);
     } else {
         setLogoUrl(null);
         setCompanyName(null);
@@ -106,9 +122,43 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
     });
     
     const headerContent = logoUrl
-      ? `<img id="pdf-logo" src="${logoUrl}" alt="Logo" style="max-height: 236.25px; max-width: 596.25px; height: auto; width: auto; transform: scale(1.25);"/>`
+      ? `<img id="pdf-logo" src="${logoUrl}" alt="Logo" style="max-height: 240px; max-width: 450px; height: auto; width: auto;"/>`
       : `<h2 style="font-size: 24px; color: #000000; font-weight: bold;">${companyName || "Smart Center Samsung Aracaju"}</h2>`;
 
+    let servicesHtml = "";
+    if (values.includedServices && values.includedServices.length > 0) {
+      servicesHtml += `
+        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee; display: flex; align-items: flex-start;">
+          <img src="${wrenchIconBase64}" style="width: 20px; height: 20px; margin-right: 12px; margin-top: 4px;" />
+          <div style="flex: 1;">
+            <h3 style="font-size: 16px; color: #000000; font-weight: bold; margin: 0 0 10px 0;">Serviços Inclusos</h3>`;
+
+      values.includedServices.forEach(service => {
+        const priceText = `<strong style="color: #22c55e;">Cortesia</strong>`;
+        servicesHtml += `
+          <div style="margin-bottom: 10px;">
+            <p style="margin: 5px 0;"><strong>${service.name}:</strong> ${priceText}</p>
+            ${service.termsUrl ? `<a href="${service.termsUrl}" target="_blank" style="font-size: 12px; color: #007bff; text-decoration: none;">Ver Termos e Condições</a>` : ''}
+          </div>
+        `;
+      });
+
+      servicesHtml += `
+            <p style="margin: 10px 0 0 0; font-size: 11px; color: #555;"><em>* Instalação do produto não inclui serviços de alvenaria, marcenaria, etc.</em></p>
+          </div>
+        </div>
+      `;
+    }
+
+    let observationsHtml = "";
+    if (values.observations) {
+        observationsHtml = `
+            <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
+                <h3 style="font-size: 16px; color: #000000; font-weight: bold; margin: 0 0 10px 0;">Observações</h3>
+                <p style="white-space: pre-wrap; font-size: 14px; color: #333;">${values.observations}</p>
+            </div>
+        `;
+    }
 
     return `
       <div id="pdf-content" style="font-family: Arial, sans-serif; color: #333; padding: 40px; width: 210mm; min-height: 297mm; background-color: white;">
@@ -121,6 +171,8 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
             <p><strong>Cliente:</strong> ${client?.name}</p>
         </div>
         ${productsHtml}
+        ${servicesHtml}
+        ${observationsHtml}
         <div style="margin-top: 40px; font-size: 12px; color: #555;">
             <p>Agradecemos a sua preferência!</p>
             <p>Proposta valida por 24h ou enquanto durarem os estoques.</p>
@@ -245,7 +297,7 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
         <DialogHeader>
           <DialogTitle>Gerar Proposta em PDF para {client?.name}</DialogTitle>
           <DialogDescription>
-            Adicione os produtos e os detalhes para gerar a proposta em PDF.
+            Adicione os produtos e os detalhes para gerar la proposta em PDF.
           </DialogDescription>
         </DialogHeader>
         
@@ -378,6 +430,69 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
                 <Button type="button" variant="outline" size="sm" onClick={() => append({ name: "", cashPrice: 0, sku: "", installmentPriceTotal: undefined, installments: undefined, photoUrl: "" })}>
                     <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Outro Produto
                 </Button>
+
+                <div className="space-y-2 pt-4">
+                    <Accordion type="single" collapsible className="w-full">
+                        <AccordionItem value="services">
+                            <AccordionTrigger>
+                                Serviços Inclusos (Opcional)
+                            </AccordionTrigger>
+                            <AccordionContent>
+                                <div className="space-y-2 p-1">
+                                    <Controller
+                                        control={form.control}
+                                        name="includedServices"
+                                        render={({ field }) => (
+                                            <>
+                                                {availableServices.map((service) => (
+                                                    <div key={service.id} className="flex items-center space-x-2">
+                                                        <Checkbox
+                                                            id={service.id}
+                                                            checked={(field.value || []).some(s => s.id === service.id)}
+                                                            onCheckedChange={(checked) => {
+                                                                const currentServices = field.value || [];
+                                                                if (checked) {
+                                                                    field.onChange([...currentServices, { id: service.id, name: service.name, price: service.price, termsUrl: service.termsUrl }]);
+                                                                } else {
+                                                                    field.onChange(currentServices.filter(s => s.id !== service.id));
+                                                                }
+                                                            }}
+                                                        />
+                                                        <label
+                                                            htmlFor={service.id}
+                                                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                                                        >
+                                                            {service.name}
+                                                        </label>
+                                                    </div>
+                                                ))}
+                                            </>
+                                        )}
+                                    />
+                                    {availableServices.length === 0 && (
+                                        <p className="text-sm text-muted-foreground text-center">Nenhum serviço disponível.</p>
+                                    )}
+                                </div>
+                            </AccordionContent>
+                        </AccordionItem>
+                    </Accordion>
+                </div>
+                 <FormField
+                    control={form.control}
+                    name="observations"
+                    render={({ field }) => (
+                        <FormItem>
+                            <FormLabel>Observações (Opcional)</FormLabel>
+                            <FormControl>
+                                <Textarea
+                                placeholder="Adicione qualquer observação relevante para a proposta..."
+                                {...field}
+                                />
+                            </FormControl>
+                            <FormMessage />
+                        </FormItem>
+                    )}
+                    />
             </form>
         </Form>
 

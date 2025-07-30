@@ -36,7 +36,7 @@ const ProductSchema = z.object({
   name: z.string().min(1, "O nome do produto não pode ser vazio."),
   sku: z.string().optional(),
   photoUrl: z.string().optional(),
-  cashPrice: z.number().positive("O valor à vista deve ser positivo."),
+  cashPrice: z.number().positive("O valor à vista deve ser positivo.").or(z.literal(0)),
   installmentPriceTotal: z.number().positive("O valor a prazo deve ser positivo.").optional(),
   installments: z.number().int().positive("O número de parcelas deve ser positivo.").optional(),
 }).refine(data => {
@@ -47,9 +47,18 @@ const ProductSchema = z.object({
     path: ["installments"],
 });
 
+const IncludedServiceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  price: z.number(),
+  termsUrl: z.string().optional(),
+});
+
 export const ProposalSchema = z.object({
   products: z.array(ProductSchema).min(1, "Adicione pelo menos um produto."),
   proposalDate: z.date(),
+  includedServices: z.array(IncludedServiceSchema).optional(),
+  observations: z.string().optional(),
 });
 export type ProposalFormValues = z.infer<typeof ProposalSchema>;
 
@@ -275,6 +284,14 @@ export interface BrandingSettings {
     companyName?: string;
 }
 
+export interface InstallationService {
+    id: string;
+    name: string;
+    price: number;
+    termsUrl?: string;
+    adminId: string;
+    createdAt: string;
+}
 
 export interface DashboardAnalyticsData {
   sales: {

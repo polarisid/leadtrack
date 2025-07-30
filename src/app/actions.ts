@@ -3,7 +3,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput, ProposalTextGeneratorInput, ProposalTextGeneratorOutput, BrandingSettings } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput, ProposalTextGeneratorInput, ProposalTextGeneratorOutput, BrandingSettings, InstallationService } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction, arrayUnion, setDoc } from 'firebase/firestore';
@@ -2394,9 +2394,9 @@ export async function generateOfferShareTextAction(input: OfferTextGeneratorInpu
     return await generateOfferShareText(input);
 }
 
-// ======== Branding Actions ========
+// ======== Branding & Service Actions ========
 
-export async function getBrandingSettings(): Promise<BrandingSettings | null> {
+export async function getBrandingSettings() {
     if (!db) return null;
     
     try {
@@ -2425,5 +2425,74 @@ export async function updateBrandingSettings(adminId: string, settings: Branding
         return { success: true };
     } catch (e: any) {
         return { success: false, error: e.message || 'Erro ao salvar configurações de marca.' };
+    }
+}
+
+const serviceFormSchema = z.object({
+  name: z.string().min(3, "O nome do serviço deve ter pelo menos 3 caracteres."),
+  price: z.number().min(0, "O valor não pode ser negativo."),
+  termsUrl: z.string().url("A URL dos termos é inválida.").optional().or(z.literal('')),
+});
+export type ServiceFormValues = z.infer<typeof serviceFormSchema>;
+
+export async function getInstallationServices(): Promise<InstallationService[]> {
+    if (!db) return [];
+    const servicesRef = collection(db, 'installationServices');
+    const q = query(servicesRef, orderBy('createdAt', 'desc'));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+            id: doc.id,
+            ...data,
+            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+        } as InstallationService
+    });
+}
+
+export async function createInstallationService(data: ServiceFormValues, adminId: string) {
+    if (!db || !await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+    
+    try {
+        const docRef = await addDoc(collection(db, 'installationServices'), {
+            ...data,
+            adminId,
+            createdAt: Timestamp.now(),
+        });
+        revalidatePath('/admin/dashboard');
+        const newServiceDoc = await getDoc(docRef);
+        const newServiceData = newServiceDoc.data();
+        return { 
+            success: true, 
+            service: { 
+                id: docRef.id, 
+                ...newServiceData,
+                createdAt: (newServiceData?.createdAt as Timestamp).toDate().toISOString(),
+            } as InstallationService 
+        };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao criar serviço.' };
+    }
+}
+
+export async function updateInstallationService(serviceId: string, data: ServiceFormValues, adminId: string) {
+    if (!db || !await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+    try {
+        await updateDoc(doc(db, 'installationServices', serviceId), data);
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao atualizar serviço.' };
+    }
+}
+
+export async function deleteInstallationService(serviceId: string, adminId: string) {
+    if (!db || !await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+    try {
+        await deleteDoc(doc(db, 'installationServices', serviceId));
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao deletar serviço.' };
     }
 }
