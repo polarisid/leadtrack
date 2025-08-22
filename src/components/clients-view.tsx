@@ -3,7 +3,7 @@
 'use client';
 
 import { useState, useMemo, useTransition, useRef, useEffect, useCallback } from 'react';
-import { Client, ClientStatus, clientStatuses, ProductCategory, productCategories, RecentSale, MessageTemplate, Tag, Offer } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, ProductCategory, productCategories, RecentSale, MessageTemplate, Tag, Offer, Reminder } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -67,9 +67,11 @@ import {
   Tag as TagIcon,
   Flame,
   FileText,
+  Bell,
+  CheckCircle,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead, getTags, updateClientTags, getOffers } from '@/app/actions';
+import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead, getTags, updateClientTags, getOffers, getReminders, updateReminderStatus } from '@/app/actions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -88,7 +90,7 @@ import { ClientImportDialog } from './client-import-dialog';
 import Papa from "papaparse";
 import ClientDetailSheet from './client-detail-sheet';
 import { DailyBriefing } from './daily-briefing';
-import { format, subDays, isBefore, formatDistanceToNow } from 'date-fns';
+import { format, subDays, isBefore, formatDistanceToNow, parseISO, isPast } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { SaleValueDialog } from './sale-value-dialog';
@@ -98,6 +100,7 @@ import { SellerPerformanceView } from './seller-performance-view';
 import { OfferFeed } from './offer-feed';
 import { Badge } from './ui/badge';
 import { ProposalFormDialog } from './proposal-form-dialog';
+import { Checkbox } from './ui/checkbox';
 
 
 export function ClientsView() {
@@ -118,6 +121,9 @@ export function ClientsView() {
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [isDetailSheetOpen, setIsDetailSheetOpen] = useState(false);
   const [clientForProposal, setClientForProposal] = useState<Client | null>(null);
+
+  const [reminders, setReminders] = useState<any[]>([]);
+  const [isLoadingReminders, setIsLoadingReminders] = useState(true);
 
   const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
   const [isLoadingRecentSales, setIsLoadingRecentSales] = useState(true);
@@ -147,12 +153,14 @@ export function ClientsView() {
         getMessageTemplates(user.uid),
         getTags(user.uid),
         getOffers(),
-      ]).then(([clientsData, salesData, templatesData, tagsData, offersData]) => {
+        getReminders(user.uid),
+      ]).then(([clientsData, salesData, templatesData, tagsData, offersData, remindersData]) => {
         setClients(clientsData);
         setRecentSales(salesData);
         setMessageTemplates(templatesData);
         setTags(tagsData);
         setOffers(offersData);
+        setReminders(remindersData);
       }).catch((error) => {
         console.error("Firebase permission error:", error);
         toast({
@@ -165,6 +173,7 @@ export function ClientsView() {
         setIsLoadingClients(false);
         setIsLoadingRecentSales(false);
         setIsLoadingOffers(false);
+        setIsLoadingReminders(false);
       });
     }
   }, [user?.uid, toast]);
@@ -188,10 +197,12 @@ export function ClientsView() {
   }, [fetchGroupLeads]);
 
   useEffect(() => {
-    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
+    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
     audio.preload = 'auto';
     audioRef.current = audio;
   }, []);
+  
+  const pendingReminders = useMemo(() => reminders.filter(r => !r.isCompleted), [reminders]);
 
   const filteredClients = useMemo(() => {
     const filtered = clients
@@ -211,7 +222,7 @@ export function ClientsView() {
       if (sortOrder === 'updatedAtAsc') {
         return dateA - dateB;
       }
-      return dateB - a;
+      return dateB - dateA;
     });
   }, [clients, searchTerm, statusFilter, productFilter, sortOrder]);
 
@@ -266,6 +277,21 @@ export function ClientsView() {
         });
     }
   };
+
+  const handleToggleReminder = (clientId: string, reminderId: string, isCompleted: boolean) => {
+      if(!user) return;
+      startTransition(async () => {
+          const result = await updateReminderStatus(clientId, reminderId, isCompleted, user.uid);
+          if (result.success && result.client) {
+              toast({ title: "Lembrete atualizado!" });
+              handleClientUpdated(result.client);
+              const updatedReminders = await getReminders(user.uid);
+              setReminders(updatedReminders);
+          } else {
+              toast({ variant: "destructive", title: "Erro", description: result.error });
+          }
+      });
+  }
 
   const handleTagChange = (client: Client, tagId: string, isChecked: boolean) => {
     if (!user) return;
@@ -347,13 +373,19 @@ export function ClientsView() {
   
   const handleClientAdded = useCallback((newClient: Client) => {
     setClients(prevClients => [newClient, ...prevClients]);
-  }, []);
+    if(user) {
+        getReminders(user.uid).then(setReminders);
+    }
+  }, [user]);
 
   const handleClientUpdated = useCallback((updatedClient: Client) => {
       setClients(prevClients => 
           prevClients.map(c => c.id === updatedClient.id ? {...c, ...updatedClient} : c)
       );
-  }, []);
+      if(user) {
+        getReminders(user.uid).then(setReminders);
+      }
+  }, [user]);
 
   const handleClientsImported = useCallback((newClients: Client[]) => {
     setClients(prevClients => [...newClients, ...prevClients]);
@@ -457,7 +489,7 @@ export function ClientsView() {
 
       <main className="flex-1 container mx-auto p-4 sm:p-6 lg:p-8">
         <Tabs defaultValue="clientes" className="w-full">
-             <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto mb-6 h-auto">
+             <TabsList className="grid w-full grid-cols-5 max-w-3xl mx-auto mb-6 h-auto">
                 <TabsTrigger value="clientes" className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
                     <LayoutGrid className="h-5 w-5" />
                     <span className="hidden sm:inline">Clientes</span>
@@ -471,6 +503,16 @@ export function ClientsView() {
                         className="ml-0 sm:ml-2 rounded-full"
                     >
                         {offers.length}
+                    </Badge>
+                </TabsTrigger>
+                <TabsTrigger value="reminders" className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
+                    <Bell className="h-5 w-5" />
+                    <span className="hidden sm:inline">Lembretes</span>
+                     <Badge
+                        variant={pendingReminders.length > 0 ? 'default' : 'secondary'}
+                        className="ml-0 sm:ml-2 rounded-full"
+                    >
+                        {pendingReminders.length}
                     </Badge>
                 </TabsTrigger>
                 <TabsTrigger value="grupo" disabled={!userProfile?.groupId} className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
@@ -495,57 +537,6 @@ export function ClientsView() {
                 <div>
                     <DailyBriefing />
                 </div>
-                <Accordion type="single" collapsible className="w-full">
-                <AccordionItem value="recent-sales" className="border rounded-lg shadow-sm bg-card text-card-foreground">
-                    <AccordionTrigger className="p-6 hover:no-underline w-full">
-                        <div className="flex w-full justify-between items-center">
-                            <div className="text-left">
-                                <CardTitle className="flex items-center gap-2">
-                                    <ShoppingBag className="h-5 w-5" />
-                                    Últimas Vendas
-                                </CardTitle>
-                                <CardDescription className="pt-2">
-                                Clique para ver suas últimas 10 vendas.
-                                </CardDescription>
-                            </div>
-                        </div>
-                    </AccordionTrigger>
-                    <AccordionContent>
-                    <div className="px-6 pb-6 pt-0">
-                        {isLoadingRecentSales ? (
-                            <div className="space-y-2">
-                                {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
-                            </div>
-                        ) : recentSales.length > 0 ? (
-                            <ul className="space-y-3">
-                                {recentSales.map((sale) => (
-                                    <li key={sale.id} className="flex items-center justify-between p-2 rounded-md bg-muted/50">
-                                        <div className="text-sm">
-                                            <p className="font-medium">{sale.clientName} - <span className="text-green-600 font-semibold">{sale.saleValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span></p>
-                                            <p className="text-muted-foreground">
-                                                {format(new Date(sale.saleDate), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
-                                            </p>
-                                        </div>
-                                        <Button 
-                                            variant="ghost" 
-                                            size="sm"
-                                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                            onClick={() => setSaleToCancel(sale)}
-                                            disabled={isPending}
-                                        >
-                                            <XCircle className="mr-2 h-4 w-4" />
-                                            Cancelar
-                                        </Button>
-                                    </li>
-                                ))}
-                            </ul>
-                        ) : (
-                            <p className="text-center text-muted-foreground p-4">Nenhuma venda recente encontrada.</p>
-                        )}
-                    </div>
-                    </AccordionContent>
-                </AccordionItem>
-                </Accordion>
                 
                 <div className="space-y-4">
                     <h2 className="text-2xl md:text-3xl font-bold">Seus Clientes</h2>
@@ -623,7 +614,6 @@ export function ClientsView() {
                                         <TableHead>Cidade</TableHead>
                                         <TableHead>Contato</TableHead>
                                         <TableHead>Última Atualização</TableHead>
-                                        <TableHead>Remarketing</TableHead>
                                         <TableHead>Produto Desejado</TableHead>
                                         <TableHead>Status</TableHead>
                                         <TableHead className="text-right">Ações</TableHead>
@@ -657,9 +647,6 @@ export function ClientsView() {
                                         <TableCell>{client.contact}</TableCell>
                                         <TableCell>
                                             {client.updatedAt ? formatDistanceToNow(new Date(client.updatedAt), { addSuffix: true, locale: ptBR }) : '-'}
-                                        </TableCell>
-                                        <TableCell className="max-w-[150px] truncate" title={client.remarketingReminder}>
-                                            {client.remarketingReminder || '-'}
                                         </TableCell>
                                         <TableCell>{client.desiredProduct}</TableCell>
                                         <TableCell>
@@ -858,10 +845,6 @@ export function ClientsView() {
                                                 </span>
                                             </div>
                                         </div>
-                                        <div className="flex items-start gap-2 text-muted-foreground pt-2 min-w-0">
-                                            <MessageSquare className="h-4 w-4 flex-shrink-0 mt-0.5"/>
-                                            <p className="break-words" title={client.remarketingReminder}>{client.remarketingReminder || 'Nenhum lembrete'}</p>
-                                        </div>
                                     </CardContent>
                                 </Card>
                             )})}
@@ -885,6 +868,48 @@ export function ClientsView() {
                     currentUserProfile={userProfile}
                     clients={clients}
                 />
+            </TabsContent>
+
+            <TabsContent value="reminders">
+                 <Card>
+                    <CardHeader>
+                        <CardTitle>Lembretes Pendentes</CardTitle>
+                        <CardDescription>
+                            Todas as suas tarefas e lembretes que ainda não foram concluídos.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        {isLoadingReminders ? <Skeleton className="h-32 w-full" /> : 
+                         pendingReminders.length === 0 ? <p className="text-center text-muted-foreground p-8">Você não tem lembretes pendentes. 🎉</p> : (
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Cliente</TableHead>
+                                        <TableHead>Lembrete</TableHead>
+                                        <TableHead>Data</TableHead>
+                                        <TableHead className="text-right">Ação</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {pendingReminders.map((reminder) => (
+                                        <TableRow key={reminder.id} className={cn(isPast(parseISO(reminder.reminderDate)) && 'bg-red-50 dark:bg-red-900/20')}>
+                                            <TableCell className="font-medium">{reminder.clientName}</TableCell>
+                                            <TableCell>{reminder.text}</TableCell>
+                                            <TableCell>{format(parseISO(reminder.reminderDate), 'dd/MM/yyyy', { locale: ptBR })}</TableCell>
+                                            <TableCell className="text-right">
+                                                <Button size="sm" variant="outline" onClick={() => handleToggleReminder(reminder.clientId, reminder.id, true)} disabled={isPending}>
+                                                    <CheckCircle className="mr-2 h-4 w-4" />
+                                                    Concluir
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                         )
+                        }
+                    </CardContent>
+                </Card>
             </TabsContent>
 
             <TabsContent value="grupo">

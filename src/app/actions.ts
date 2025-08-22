@@ -3,7 +3,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput, ProposalTextGeneratorInput, ProposalTextGeneratorOutput, BrandingSettings, InstallationService } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput, ProposalTextGeneratorInput, ProposalTextGeneratorOutput, BrandingSettings, InstallationService, Reminder, ReminderFormValues } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction, arrayUnion, setDoc } from 'firebase/firestore';
@@ -53,6 +53,11 @@ export async function getClients(userId: string): Promise<Client[]> {
       ...data,
       createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
       updatedAt: data.updatedAt ? (data.updatedAt as Timestamp).toDate().toISOString() : undefined,
+      reminders: (data.reminders || []).map((r: any) => ({
+        ...r,
+        createdAt: r.createdAt.toDate().toISOString(),
+        reminderDate: r.reminderDate.toDate().toISOString()
+      })),
     } as Client;
   });
 
@@ -131,6 +136,7 @@ export async function addClient(data: unknown, userId: string) {
           ...clientData,
           createdAt: (clientData?.createdAt as Timestamp).toDate().toISOString(),
           updatedAt: (clientData?.updatedAt as Timestamp).toDate().toISOString(),
+          reminders: (clientData?.reminders || []).map((r: any) => ({ ...r, createdAt: r.createdAt.toDate().toISOString(), reminderDate: r.reminderDate.toDate().toISOString() })),
         } as Client
       };
     } else {
@@ -145,6 +151,7 @@ export async function addClient(data: unknown, userId: string) {
         remarketingReminder: result.data.remarketingReminder || '',
         createdAt: now,
         updatedAt: now,
+        reminders: [],
       };
 
       batch.set(newClientRef, newClientData);
@@ -232,6 +239,7 @@ export async function addBulkClients(clientsData: any[], userId: string) {
       createdAt: now,
       updatedAt: now,
       tagIds: [],
+      reminders: [],
     };
     
     const docRef = doc(clientsRef);
@@ -302,6 +310,7 @@ export async function updateClient(id: string, data: unknown, userId: string) {
           remarketingReminder: result.data.remarketingReminder || '',
           createdAt: (existingData?.createdAt as Timestamp).toDate().toISOString(),
           updatedAt: now.toDate().toISOString(),
+          reminders: (existingData?.reminders || []).map((r: any) => ({ ...r, createdAt: r.createdAt.toDate().toISOString(), reminderDate: r.reminderDate.toDate().toISOString() })),
         }
         return { success: true, client: updatedClientData as Client };
 
@@ -324,9 +333,25 @@ export async function updateClientStatus(id: string, status: ClientStatus, userI
         if (!clientDoc.exists()) {
             return { error: 'Cliente não encontrado.' };
         }
-        const previousStatus = clientDoc.data().status;
+        const previousStatus = clientDoc.data().status as ClientStatus;
         const now = Timestamp.now();
         const batch = writeBatch(db);
+
+        // Don't add a comment if status is the same
+        if (status !== previousStatus) {
+            const userDoc = await getDoc(doc(db, 'users', userId));
+            const userName = userDoc.exists() ? userDoc.data().name : 'Usuário';
+
+            const statusCommentText = `Status alterado de "${previousStatus}" para "${status}" por ${userName}.`;
+            const commentsRef = collection(db, 'clients', id, 'comments');
+            batch.set(doc(commentsRef), {
+                text: statusCommentText,
+                userId: "system",
+                isSystemMessage: true,
+                createdAt: now,
+            });
+        }
+
 
         if (status === 'Fechado' && previousStatus !== 'Fechado') {
              if (typeof saleValue !== 'number' || saleValue <= 0) {
@@ -1467,19 +1492,11 @@ export async function cancelSale(saleId: string, userId: string) {
 
     const updatedClient: Client = {
       id: updatedClientDoc.id,
-      name: clientData?.name,
-      city: clientData?.city,
-      contact: clientData?.contact,
-      normalizedContact: clientData?.normalizedContact,
-      lastProductBought: clientData?.lastProductBought,
-      desiredProduct: clientData?.desiredProduct,
-      status: clientData?.status,
-      remarketingReminder: clientData?.remarketingReminder,
+      ...clientData,
       createdAt: (clientData?.createdAt as Timestamp).toDate().toISOString(),
       updatedAt: (clientData?.updatedAt as Timestamp).toDate().toISOString(),
-      userId: clientData?.userId,
-      tagIds: clientData?.tagIds || []
-    };
+      reminders: (clientData?.reminders || []).map((r: any) => ({ ...r, createdAt: r.createdAt.toDate().toISOString(), reminderDate: r.reminderDate.toDate().toISOString() })),
+    } as Client;
 
     return { success: true, updatedClient: updatedClient };
 
@@ -1877,6 +1894,7 @@ export async function captureLead(data: unknown, groupId: string) {
       createdAt: now,
       updatedAt: now,
       tagIds: [],
+      reminders: [],
     };
     batch.set(newClientRef, newClientData);
 
@@ -1958,11 +1976,13 @@ export async function claimLead(clientId: string, userId: string, userName: stri
     await batch.commit();
 
     const updatedDoc = await getDoc(clientDocRef);
+    const updatedClientData = updatedDoc.data();
     const updatedClient = {
       id: updatedDoc.id,
-      ...updatedDoc.data(),
-      createdAt: (updatedDoc.data()?.createdAt as Timestamp).toDate().toISOString(),
-      updatedAt: (updatedDoc.data()?.updatedAt as Timestamp).toDate().toISOString(),
+      ...updatedClientData,
+      createdAt: (updatedClientData?.createdAt as Timestamp).toDate().toISOString(),
+      updatedAt: (updatedClientData?.updatedAt as Timestamp).toDate().toISOString(),
+      reminders: (updatedClientData?.reminders || []).map((r: any) => ({ ...r, createdAt: r.createdAt.toDate().toISOString(), reminderDate: r.reminderDate.toDate().toISOString() })),
     } as Client
 
     revalidatePath('/');
@@ -2101,6 +2121,150 @@ export async function updateClientTags(clientId: string, tagIds: string[], userI
   }
 }
 
+// ======== Reminder Actions ========
+
+export async function addReminder(clientId: string, data: ReminderFormValues, userId: string) {
+  if (!userId) return { success: false, error: 'Usuário não autenticado.' };
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+
+  try {
+    const clientRef = doc(db, 'clients', clientId);
+    const newReminder = {
+      id: doc(collection(db, 'reminders')).id, // Generate a unique ID
+      text: data.text,
+      reminderDate: Timestamp.fromDate(data.reminderDate),
+      isCompleted: false,
+      createdAt: Timestamp.now(),
+    };
+
+    await updateDoc(clientRef, {
+      reminders: arrayUnion(newReminder),
+      updatedAt: Timestamp.now(),
+    });
+
+    revalidatePath('/');
+    
+    const clientDoc = await getDoc(clientRef);
+    const clientData = clientDoc.data();
+    const updatedClient = { 
+        id: clientDoc.id, 
+        ...clientData,
+        createdAt: (clientData?.createdAt as Timestamp).toDate().toISOString(),
+        updatedAt: (clientData?.updatedAt as Timestamp).toDate().toISOString(),
+        reminders: (clientData?.reminders || []).map((r: any) => ({ ...r, createdAt: r.createdAt.toDate().toISOString(), reminderDate: r.reminderDate.toDate().toISOString() })),
+    } as Client;
+
+    return { success: true, client: updatedClient };
+
+  } catch (e: any) {
+    return { success: false, error: e.message || "Erro ao adicionar lembrete." };
+  }
+}
+
+export async function updateReminderStatus(clientId: string, reminderId: string, isCompleted: boolean, userId: string) {
+  if (!userId) return { success: false, error: 'Usuário não autenticado.' };
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+
+  try {
+    const clientRef = doc(db, 'clients', clientId);
+    const clientDoc = await getDoc(clientRef);
+    if (!clientDoc.exists()) {
+      return { success: false, error: 'Cliente não encontrado.' };
+    }
+
+    const reminders: Reminder[] = clientDoc.data().reminders || [];
+    const updatedReminders = reminders.map(r => r.id === reminderId ? { ...r, isCompleted } : r);
+
+    await updateDoc(clientRef, {
+      reminders: updatedReminders,
+      updatedAt: Timestamp.now(),
+    });
+
+    revalidatePath('/');
+
+    const updatedDoc = await getDoc(clientRef);
+    const clientData = updatedDoc.data();
+    const updatedClient = { 
+        id: updatedDoc.id, 
+        ...clientData,
+        createdAt: (clientData?.createdAt as Timestamp).toDate().toISOString(),
+        updatedAt: (clientData?.updatedAt as Timestamp).toDate().toISOString(),
+        reminders: (clientData?.reminders || []).map((r: any) => ({ ...r, createdAt: r.createdAt.toDate().toISOString(), reminderDate: r.reminderDate.toDate().toISOString() })),
+    } as Client;
+
+    return { success: true, client: updatedClient };
+
+  } catch (e: any) {
+    return { success: false, error: e.message || "Erro ao atualizar lembrete." };
+  }
+}
+
+export async function deleteReminder(clientId: string, reminderId: string, userId: string) {
+  if (!userId) return { success: false, error: 'Usuário não autenticado.' };
+  if (!db) return { success: false, error: "Firebase não está configurado." };
+
+  try {
+    const clientRef = doc(db, 'clients', clientId);
+    const clientDoc = await getDoc(clientRef);
+    if (!clientDoc.exists()) {
+      return { success: false, error: 'Cliente não encontrado.' };
+    }
+
+    const reminders: Reminder[] = clientDoc.data().reminders || [];
+    const reminderToDelete = reminders.find(r => r.id === reminderId);
+
+    if (reminderToDelete) {
+      await updateDoc(clientRef, {
+        reminders: arrayRemove(reminderToDelete),
+        updatedAt: Timestamp.now(),
+      });
+    }
+
+    revalidatePath('/');
+    
+    const updatedDoc = await getDoc(clientRef);
+    const clientData = updatedDoc.data();
+    const updatedClient = { 
+        id: updatedDoc.id, 
+        ...clientData,
+        createdAt: (clientData?.createdAt as Timestamp).toDate().toISOString(),
+        updatedAt: (clientData?.updatedAt as Timestamp).toDate().toISOString(),
+        reminders: (clientData?.reminders || []).map((r: any) => ({ ...r, createdAt: r.createdAt.toDate().toISOString(), reminderDate: r.reminderDate.toDate().toISOString() })),
+    } as Client;
+
+    return { success: true, client: updatedClient };
+
+  } catch (e: any) {
+    return { success: false, error: e.message || "Erro ao deletar lembrete." };
+  }
+}
+
+export async function getReminders(userId: string) {
+    if (!userId || !db) return [];
+    
+    const clientsRef = collection(db, 'clients');
+    const q = query(clientsRef, where('userId', '==', userId));
+    const querySnapshot = await getDocs(q);
+
+    const allReminders: any[] = [];
+    querySnapshot.forEach(doc => {
+        const client = doc.data();
+        if (client.reminders && client.reminders.length > 0) {
+            client.reminders.forEach((reminder: any) => {
+                allReminders.push({
+                    ...reminder,
+                    createdAt: (reminder.createdAt as Timestamp).toDate().toISOString(),
+                    reminderDate: (reminder.reminderDate as Timestamp).toDate().toISOString(),
+                    clientId: doc.id,
+                    clientName: client.name,
+                });
+            });
+        }
+    });
+
+    return allReminders.sort((a,b) => new Date(a.reminderDate).getTime() - new Date(b.reminderDate).getTime());
+}
+
 // AI Actions
 export async function analyzeLeadAction(input: LeadAnalysisInput) {
     return await analyzeLead(input);
@@ -2117,11 +2281,13 @@ export async function saveLeadAnalysis(clientId: string, analysis: LeadAnalysisO
         });
         
         const updatedDoc = await getDoc(clientRef);
+        const updatedData = updatedDoc.data();
         const updatedClient = {
             id: updatedDoc.id,
-            ...updatedDoc.data(),
-            createdAt: (updatedDoc.data()?.createdAt as Timestamp).toDate().toISOString(),
-            updatedAt: (updatedDoc.data()?.updatedAt as Timestamp).toDate().toISOString(),
+            ...updatedData,
+            createdAt: (updatedData?.createdAt as Timestamp).toDate().toISOString(),
+            updatedAt: (updatedData?.updatedAt as Timestamp).toDate().toISOString(),
+            reminders: (updatedData?.reminders || []).map((r: any) => ({ ...r, createdAt: r.createdAt.toDate().toISOString(), reminderDate: r.reminderDate.toDate().toISOString() })),
         } as Client;
 
         revalidatePath('/');
@@ -2244,6 +2410,8 @@ export async function createOffer(data: OfferFormValues, userId: string, userNam
     
     revalidatePath('/');
     revalidatePath('/admin/dashboard');
+    revalidatePath('/oferta/[id]', 'page');
+
 
     const createdDoc = await getDoc(docRef);
     const createdData = createdDoc.data();
@@ -2276,6 +2444,7 @@ export async function updateOffer(offerId: string, data: OfferFormValues, adminI
 
     revalidatePath('/');
     revalidatePath('/admin/dashboard');
+    revalidatePath('/oferta/[id]', 'page');
     
     const updatedDoc = await getDoc(offerRef);
     const updatedData = updatedDoc.data();
@@ -2313,6 +2482,25 @@ export async function getOffers(): Promise<Offer[]> {
   });
 }
 
+export async function getOfferById(offerId: string): Promise<Offer | null> {
+    if (!db) throw new Error("Firebase não está configurado.");
+    
+    const offerRef = doc(db, 'offers', offerId);
+    const offerDoc = await getDoc(offerRef);
+
+    if (!offerDoc.exists()) {
+        return null;
+    }
+
+    const data = offerDoc.data();
+    return {
+        id: offerDoc.id,
+        ...data,
+        validUntil: (data.validUntil as Timestamp).toDate().toISOString(),
+        createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+    } as Offer;
+}
+
 export async function getAllOffersForAdmin(adminId: string): Promise<Offer[]> {
   if (!db || !await isAdmin(adminId)) return [];
 
@@ -2338,6 +2526,7 @@ export async function updateOfferStatus(offerId: string, status: OfferStatus, ad
     await updateDoc(doc(db, 'offers', offerId), { status });
     revalidatePath('/');
     revalidatePath('/admin/dashboard');
+    revalidatePath('/oferta/[id]', 'page');
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message || 'Erro ao atualizar status da oferta.' };
@@ -2351,6 +2540,7 @@ export async function deleteOffer(offerId: string, adminId: string) {
     await deleteDoc(doc(db, 'offers', offerId));
     revalidatePath('/');
     revalidatePath('/admin/dashboard');
+    revalidatePath('/oferta/[id]', 'page');
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message || 'Erro ao deletar oferta.' };
@@ -2393,6 +2583,7 @@ export async function toggleOfferLike(offerId: string, userId: string) {
 export async function generateOfferShareTextAction(input: OfferTextGeneratorInput): Promise<OfferTextGeneratorOutput> {
     return await generateOfferShareText(input);
 }
+
 
 // ======== Branding & Service Actions ========
 
@@ -2444,7 +2635,10 @@ export async function getInstallationServices(): Promise<InstallationService[]> 
         const data = doc.data();
         return {
             id: doc.id,
-            ...data,
+            name: data.name,
+            price: data.price,
+            termsUrl: data.termsUrl,
+            adminId: data.adminId,
             createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
         } as InstallationService
     });
@@ -2496,3 +2690,7 @@ export async function deleteInstallationService(serviceId: string, adminId: stri
         return { success: false, error: e.message || 'Erro ao deletar serviço.' };
     }
 }
+
+    
+
+    

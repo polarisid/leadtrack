@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import {
@@ -9,7 +10,7 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { Client, Comment, MessageTemplate, Tag, LeadAnalysisOutput, ClientStatus, clientStatuses } from "@/lib/types";
+import { Client, Comment, MessageTemplate, Tag, LeadAnalysisOutput, ClientStatus, clientStatuses, Reminder, ReminderFormValues } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -29,13 +30,16 @@ import {
   Copy,
   FileText,
   ChevronDown,
+  Trash2,
+  CheckCircle,
+  PlusCircle,
 } from "lucide-react";
 import { StatusBadge } from "./status-badge";
-import { format } from "date-fns";
+import { format, isPast, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { WhatsappIcon } from "./icons/whatsapp-icon";
 import { useState, useEffect, useTransition } from "react";
-import { getComments, addComment, analyzeLeadAction, saveLeadAnalysis } from "@/app/actions";
+import { getComments, addComment, analyzeLeadAction, saveLeadAnalysis, addReminder, updateReminderStatus, deleteReminder } from "@/app/actions";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "./ui/separator";
@@ -45,6 +49,13 @@ import { Badge } from "./ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Skeleton } from "./ui/skeleton";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ReminderSchema } from "@/lib/types";
+import { Form, FormControl, FormField, FormItem, FormMessage } from "./ui/form";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Calendar } from "./ui/calendar";
 
 interface ClientDetailSheetProps {
   isOpen: boolean;
@@ -70,7 +81,9 @@ export default function ClientDetailSheet({
   const { user } = useAuth();
   const { toast } = useToast();
   const [comments, setComments] = useState<Comment[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
   const [isLoadingComments, setIsLoadingComments] = useState(true);
+  const [isLoadingReminders, setIsLoadingReminders] = useState(true);
   const [newComment, setNewComment] = useState("");
   const [isSaving, startSavingTransition] = useTransition();
   const [isWhatsappDialogOpen, setIsWhatsappDialogOpen] = useState(false);
@@ -78,6 +91,14 @@ export default function ClientDetailSheet({
   const [isAnalyzing, startAnalysisTransition] = useTransition();
   const [analysisResult, setAnalysisResult] = useState<LeadAnalysisOutput | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  const reminderForm = useForm<ReminderFormValues>({
+    resolver: zodResolver(ReminderSchema),
+    defaultValues: {
+        text: "",
+        reminderDate: undefined,
+    },
+  });
 
 
   const fetchClientComments = () => {
@@ -100,17 +121,27 @@ export default function ClientDetailSheet({
     }
   }
 
+  const fetchClientReminders = () => {
+      if(client?.id) {
+          setIsLoadingReminders(true);
+          const sortedReminders = client.reminders?.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) || [];
+          setReminders(sortedReminders);
+          setIsLoadingReminders(false);
+      }
+  }
+
   useEffect(() => {
     if (isOpen && client) {
         fetchClientComments();
-        // Load existing analysis if present
+        fetchClientReminders();
         if (client.lastAnalysis) {
             setAnalysisResult(client.lastAnalysis);
         }
     } else {
-        // Reset state when sheet is closed
         setAnalysisResult(null);
         setAnalysisError(null);
+        setReminders([]);
+        reminderForm.reset();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, client, user?.uid]);
@@ -134,6 +165,49 @@ export default function ClientDetailSheet({
     });
   };
 
+  const handleAddReminder = (values: ReminderFormValues) => {
+      if(!client || !user) return;
+      startSavingTransition(async () => {
+          const result = await addReminder(client.id, values, user.uid);
+          if (result.success && result.client) {
+              toast({ title: "Lembrete adicionado!" });
+              onClientUpdated(result.client);
+              setReminders(result.client.reminders || []);
+              reminderForm.reset();
+          } else {
+              toast({ variant: "destructive", title: "Erro", description: result.error });
+          }
+      });
+  }
+
+   const handleToggleReminder = (reminderId: string, isCompleted: boolean) => {
+      if(!client || !user) return;
+      startSavingTransition(async () => {
+          const result = await updateReminderStatus(client.id, reminderId, isCompleted, user.uid);
+          if (result.success && result.client) {
+              toast({ title: "Lembrete atualizado!" });
+              onClientUpdated(result.client);
+              setReminders(result.client.reminders || []);
+          } else {
+              toast({ variant: "destructive", title: "Erro", description: result.error });
+          }
+      });
+  }
+  
+  const handleDeleteReminder = (reminderId: string) => {
+    if(!client || !user) return;
+    startSavingTransition(async () => {
+        const result = await deleteReminder(client.id, reminderId, user.uid);
+        if (result.success && result.client) {
+            toast({ title: "Lembrete removido!" });
+            onClientUpdated(result.client);
+            setReminders(result.client.reminders || []);
+        } else {
+            toast({ variant: "destructive", title: "Erro", description: result.error });
+        }
+    });
+  }
+
   const handleAnalyzeLead = () => {
     if (!client) return;
 
@@ -152,7 +226,6 @@ export default function ClientDetailSheet({
             });
             setAnalysisResult(result);
             
-            // Save the successful analysis
             const saveResult = await saveLeadAnalysis(client.id, result);
             if (saveResult.success && saveResult.updatedClient) {
               onClientUpdated(saveResult.updatedClient);
@@ -194,11 +267,6 @@ export default function ClientDetailSheet({
       label: "Data de Criação",
       value: format(new Date(client.createdAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
     },
-    {
-      icon: Bell,
-      label: "Lembrete de Remarketing",
-      value: client.remarketingReminder || "Nenhum",
-    },
   ];
 
   const clientTags = tags.filter(tag => client.tagIds?.includes(tag.id));
@@ -208,66 +276,72 @@ export default function ClientDetailSheet({
       <Sheet open={isOpen} onOpenChange={onOpenChange}>
         <SheetContent className="sm:max-w-lg w-full flex flex-col gap-0 p-0">
           <SheetHeader className="text-left p-6 border-b">
-            <div className="flex items-start gap-4">
-              <div className="bg-primary/10 p-3 rounded-full">
-                <User className="h-6 w-6 text-primary" />
-              </div>
-              <div className="flex-1">
-                <SheetTitle className="text-2xl">{client.name}</SheetTitle>
-                <SheetDescription className="flex items-center gap-2 flex-wrap">
-                  <StatusBadge status={client.status} className="mt-1" />
-                   {clientTags.map(tag => (
-                      <Badge key={tag.id} variant="secondary" style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40`}} className="font-normal mt-1">
-                          {tag.name}
-                      </Badge>
-                  ))}
-                </SheetDescription>
-              </div>
+             <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
+                    <div className="bg-primary/10 p-3 rounded-full">
+                        <User className="h-6 w-6 text-primary" />
+                    </div>
+                    <div className="flex-1">
+                        <SheetTitle className="text-2xl">{client.name}</SheetTitle>
+                        <SheetDescription className="flex items-center gap-2 flex-wrap">
+                        <StatusBadge status={client.status} className="mt-1" />
+                        {clientTags.map(tag => (
+                            <Badge key={tag.id} variant="secondary" style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40`}} className="font-normal mt-1">
+                                {tag.name}
+                            </Badge>
+                        ))}
+                        </SheetDescription>
+                    </div>
+                </div>
+                 <Button size="sm" variant="outline" onClick={() => onOpenProposalDialog(client)} className="flex-shrink-0">
+                    <FileText className="mr-2 h-4 w-4" />
+                    Gerar Proposta
+                </Button>
             </div>
           </SheetHeader>
 
           <ScrollArea className="flex-1">
-            <div className="p-6 space-y-6">
-              <div className="space-y-4">
-                {detailItems.map((item, index) => (
-                  <div key={index} className="flex items-start gap-4">
-                    <item.icon className="h-5 w-5 text-muted-foreground mt-1 flex-shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm text-muted-foreground">{item.label}</p>
-                      <div className="font-medium text-foreground break-words flex items-center gap-2">
-                        <span>{item.value}</span>
-                        {item.label === "Contato" && client.contact && (
-                          <button
-                            onClick={() => setIsWhatsappDialogOpen(true)}
-                            title="Enviar mensagem no WhatsApp"
-                            className="p-1.5 rounded-md text-green-500 hover:bg-green-500/10 transition-colors"
-                          >
-                            <WhatsappIcon className="h-5 w-5" />
-                            <span className="sr-only">
-                              Enviar mensagem no WhatsApp
-                            </span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <Separator />
+            <Tabs defaultValue="details" className="w-full">
+              <TabsList className="w-full grid grid-cols-4 rounded-none border-b">
+                <TabsTrigger value="details">Detalhes</TabsTrigger>
+                <TabsTrigger value="analysis">Análise IA</TabsTrigger>
+                <TabsTrigger value="comments">Observações</TabsTrigger>
+                <TabsTrigger value="reminders">Lembretes</TabsTrigger>
+              </TabsList>
               
-              {/* AI Analysis Section */}
-               <div className="space-y-4">
+              <TabsContent value="details" className="p-6 space-y-6">
+                {detailItems.map((item, index) => (
+                    <div key={index} className="flex items-start gap-4">
+                        <item.icon className="h-5 w-5 text-muted-foreground mt-1 flex-shrink-0" />
+                        <div className="min-w-0 flex-1">
+                        <p className="text-sm text-muted-foreground">{item.label}</p>
+                        <div className="font-medium text-foreground break-words flex items-center gap-2">
+                            <span>{item.value}</span>
+                            {item.label === "Contato" && client.contact && (
+                            <button
+                                onClick={() => setIsWhatsappDialogOpen(true)}
+                                title="Enviar mensagem no WhatsApp"
+                                className="p-1.5 rounded-md text-green-500 hover:bg-green-500/10 transition-colors"
+                            >
+                                <WhatsappIcon className="h-5 w-5" />
+                                <span className="sr-only">
+                                Enviar mensagem no WhatsApp
+                                </span>
+                            </button>
+                            )}
+                        </div>
+                        </div>
+                    </div>
+                ))}
+              </TabsContent>
+              
+              <TabsContent value="analysis" className="p-6 space-y-6">
                 <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-lg flex items-center gap-2">
                         <Sparkles className="h-5 w-5 text-primary" />
                         Análise com IA
                     </h3>
                     <div className="flex items-center gap-2">
-                         <Button size="sm" variant="outline" onClick={() => onOpenProposalDialog(client)}>
-                            <FileText className="mr-2 h-4 w-4" />
-                            Gerar Proposta
-                        </Button>
                         <Button size="sm" onClick={handleAnalyzeLead} disabled={isAnalyzing}>
                             {isAnalyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             Analisar Lead
@@ -325,12 +399,9 @@ export default function ClientDetailSheet({
                         Clique em "Analisar Lead" para receber dicas e insights da IA sobre este cliente.
                     </p>
                 )}
-              </div>
-
-
-              <Separator />
-
-              <div className="space-y-4">
+              </TabsContent>
+              
+              <TabsContent value="comments" className="p-6 space-y-4">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
                   <MessageSquare className="h-5 w-5" />
                   Observações
@@ -399,8 +470,95 @@ export default function ClientDetailSheet({
                     </p>
                   )}
                 </div>
-              </div>
-            </div>
+              </TabsContent>
+
+              <TabsContent value="reminders" className="p-6 space-y-4">
+                <h3 className="font-semibold text-lg flex items-center gap-2">
+                  <Bell className="h-5 w-5" />
+                  Lembretes
+                </h3>
+                 <Form {...reminderForm}>
+                    <form onSubmit={reminderForm.handleSubmit(handleAddReminder)} className="space-y-4 p-4 border rounded-lg">
+                         <FormField
+                            control={reminderForm.control}
+                            name="text"
+                            render={({ field }) => (
+                                <FormItem>
+                                <Textarea {...field} placeholder="Lembrar de..." rows={2} />
+                                <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+                        <div className="flex gap-4 items-center">
+                             <FormField
+                                control={reminderForm.control}
+                                name="reminderDate"
+                                render={({ field }) => (
+                                    <FormItem className="flex-1">
+                                    <Popover>
+                                        <PopoverTrigger asChild>
+                                        <FormControl>
+                                            <Button
+                                            variant={"outline"}
+                                            className={cn(
+                                                "w-full pl-3 text-left font-normal",
+                                                !field.value && "text-muted-foreground"
+                                            )}
+                                            >
+                                            {field.value ? (
+                                                format(field.value, "PPP", { locale: ptBR })
+                                            ) : (
+                                                <span>Escolha uma data</span>
+                                            )}
+                                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                            </Button>
+                                        </FormControl>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-auto p-0" align="start">
+                                        <Calendar
+                                            mode="single"
+                                            selected={field.value}
+                                            onSelect={field.onChange}
+                                            disabled={(date) => date < new Date(new Date().setHours(0,0,0,0))}
+                                            initialFocus
+                                        />
+                                        </PopoverContent>
+                                    </Popover>
+                                    <FormMessage />
+                                    </FormItem>
+                                )}
+                             />
+                            <Button type="submit" disabled={isSaving} size="sm">
+                                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                <PlusCircle className="mr-2 h-4 w-4" />
+                                Adicionar
+                            </Button>
+                        </div>
+                    </form>
+                </Form>
+                 <div className="space-y-4">
+                    {isLoadingReminders ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto" />
+                    : reminders.length > 0 ? reminders.map(reminder => (
+                        <div key={reminder.id} className={cn("p-3 rounded-md flex gap-3 items-center", reminder.isCompleted ? 'bg-green-50 dark:bg-green-900/30' : 'bg-muted/50')}>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleToggleReminder(reminder.id, !reminder.isCompleted)}>
+                                {reminder.isCompleted ? <CheckCircle className="h-5 w-5 text-green-600" /> : <div className="h-5 w-5 rounded-full border-2 border-muted-foreground" />}
+                            </Button>
+                            <div className="flex-1">
+                                <p className={cn("text-sm text-foreground", reminder.isCompleted && "line-through text-muted-foreground")}>{reminder.text}</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {format(parseISO(reminder.reminderDate), "dd/MM/yyyy", { locale: ptBR })}
+                                </p>
+                            </div>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteReminder(reminder.id)}>
+                                <Trash2 className="h-4 w-4"/>
+                            </Button>
+                        </div>
+                    )) :
+                    <p className="text-sm text-muted-foreground text-center p-4">Nenhum lembrete para este cliente.</p>
+                    }
+                </div>
+              </TabsContent>
+            </Tabs>
           </ScrollArea>
 
           <SheetFooter className="p-6 pt-4 mt-auto border-t flex-row justify-between">

@@ -34,6 +34,7 @@ export type OfferFormValues = z.infer<typeof OfferSchema>;
 
 const ProductSchema = z.object({
   name: z.string().min(1, "O nome do produto não pode ser vazio."),
+  quantity: z.number().int().min(1, "A quantidade deve ser pelo menos 1."),
   sku: z.string().optional(),
   photoUrl: z.string().optional(),
   cashPrice: z.number().positive("O valor à vista deve ser positivo.").or(z.literal(0)),
@@ -61,6 +62,12 @@ export const ProposalSchema = z.object({
   observations: z.string().optional(),
 });
 export type ProposalFormValues = z.infer<typeof ProposalSchema>;
+
+export const ReminderSchema = z.object({
+  text: z.string().min(3, "O lembrete deve ter pelo menos 3 caracteres."),
+  reminderDate: z.date({ required_error: "A data do lembrete é obrigatória." }),
+});
+export type ReminderFormValues = z.infer<typeof ReminderSchema>;
 
 
 // AI Related Schemas
@@ -153,6 +160,7 @@ export type OfferTextGeneratorOutput = z.infer<typeof OfferTextGeneratorOutputSc
 const ProposalProductSchema = z.object({
   name: z.string().describe('O nome do produto.'),
   sku: z.string().optional().describe('O SKU do produto, se houver.'),
+  photoUrl: z.string().optional().describe('URL da foto do produto.'),
   cashPrice: z.number().describe('O valor do produto para pagamento à vista.'),
   installmentPriceTotal: z.number().optional().describe('O valor total do produto para pagamento a prazo.'),
   installments: z.number().optional().describe('O número de parcelas para o pagamento a prazo.'),
@@ -169,6 +177,13 @@ export const ProposalTextGeneratorOutputSchema = z.object({
 });
 export type ProposalTextGeneratorOutput = z.infer<typeof ProposalTextGeneratorOutputSchema>;
 
+export interface Reminder {
+    id: string;
+    text: string;
+    reminderDate: string; // ISO String
+    isCompleted: boolean;
+    createdAt: string; // ISO String
+}
 
 export interface Client {
   id: string;
@@ -187,6 +202,7 @@ export interface Client {
   referredBy?: string;
   tagIds?: string[];
   lastAnalysis?: LeadAnalysisOutput;
+  reminders?: Reminder[];
 }
 
 export interface RecentSale {
@@ -219,8 +235,8 @@ export interface UserProfile {
   email: string;
   role: UserRole;
   status: UserStatus;
-  createdAt: string;
   groupId?: string;
+  createdAt: string;
   dailySummary?: {
     date: string; // YYYY-MM-DD
     summary: DailySummaryOutput;

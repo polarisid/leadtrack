@@ -49,7 +49,7 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
   const form = useForm<ProposalFormValues>({
     resolver: zodResolver(ProposalSchema),
     defaultValues: {
-        products: [{ name: "", cashPrice: 0, photoUrl: "" }],
+        products: [{ name: "", quantity: 1, cashPrice: 0, photoUrl: "" }],
         proposalDate: new Date(),
         includedServices: [],
         observations: "",
@@ -70,7 +70,7 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
     if (isOpen) {
       setIsBrandingLoading(true);
       form.reset({
-        products: [{ name: "", cashPrice: 0, sku: "", installmentPriceTotal: undefined, installments: undefined, photoUrl: "" }],
+        products: [{ name: "", quantity: 1, cashPrice: 0, sku: "", installmentPriceTotal: undefined, installments: undefined, photoUrl: "" }],
         proposalDate: new Date(),
         includedServices: [],
         observations: "",
@@ -97,11 +97,15 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
   const generateProposalHtml = (values: ProposalFormValues) => {
     let productsHtml = "";
     values.products.forEach((product, index) => {
-        const cashPriceFormatted = product.cashPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const totalCashPrice = product.cashPrice * product.quantity;
+        const cashPriceFormatted = totalCashPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const unitCashPriceFormatted = product.cashPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        
         let installmentText = "";
         if (product.installmentPriceTotal && product.installments) {
-            const installmentValue = (product.installmentPriceTotal / product.installments).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-            installmentText = `ou em ${product.installments}x de ${installmentValue} (total a prazo: ${product.installmentPriceTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})`;
+            const totalInstallmentPrice = product.installmentPriceTotal * product.quantity;
+            const installmentValue = (totalInstallmentPrice / product.installments).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            installmentText = `ou em ${product.installments}x de ${installmentValue} (total a prazo: ${totalInstallmentPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})`;
         }
 
         const imageHtml = product.photoUrl
@@ -114,7 +118,8 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
                 <div style="flex: 1;">
                     <h3 style="font-size: 16px; color: #000000; font-weight: bold; margin-top: 0; margin-bottom: 10px;">${product.name}</h3>
                     <p style="margin: 5px 0;"><strong>SKU:</strong> ${product.sku || 'N/A'}</p>
-                    <p style="margin: 5px 0;"><strong>Valor à Vista:</strong> ${cashPriceFormatted}</p>
+                    <p style="margin: 5px 0;"><strong>Quantidade:</strong> ${product.quantity}</p>
+                    <p style="margin: 5px 0;"><strong>Valor à Vista:</strong> ${cashPriceFormatted} (${unitCashPriceFormatted} / un)</p>
                     ${installmentText ? `<p style="margin: 5px 0;"><strong>Opção a Prazo:</strong> ${installmentText}</p>` : ''}
                 </div>
             </div>
@@ -321,19 +326,34 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
                             </Button>
                             )}
                         </div>
-                        <FormField
-                            control={form.control}
-                            name={`products.${index}.name`}
-                            render={({ field }) => (
-                                <FormItem>
-                                    <FormLabel>Nome do Produto</FormLabel>
-                                    <FormControl>
-                                        <Input {...field} placeholder="Ex: TV 55 polegadas" />
-                                    </FormControl>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <FormField
+                                control={form.control}
+                                name={`products.${index}.name`}
+                                render={({ field }) => (
+                                    <FormItem className="md:col-span-2">
+                                        <FormLabel>Nome do Produto</FormLabel>
+                                        <FormControl>
+                                            <Input {...field} placeholder="Ex: TV 55 polegadas" />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                            <FormField
+                                control={form.control}
+                                name={`products.${index}.quantity`}
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Quantidade</FormLabel>
+                                        <FormControl>
+                                            <Input type="number" {...field} onChange={(e) => field.onChange(parseInt(e.target.value) || 1)} min="1" />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        </div>
                         <FormField
                             control={form.control}
                             name={`products.${index}.sku`}
@@ -352,9 +372,9 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
                             name={`products.${index}.cashPrice`}
                             render={({ field }) => (
                                 <FormItem>
-                                    <FormLabel>Valor à Vista (R$)</FormLabel>
+                                    <FormLabel>Valor Unitário à Vista (R$)</FormLabel>
                                     <FormControl>
-                                        <Input type="text" {...field} value={field.value.toLocaleString('pt-BR')} onChange={(e) => handlePriceChange(e, index, 'cashPrice')} placeholder="3.043,80"/>
+                                        <Input type="text" value={(field.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} onChange={(e) => handlePriceChange(e, index, 'cashPrice')} placeholder="3.043,80"/>
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
@@ -366,9 +386,9 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
                                 name={`products.${index}.installmentPriceTotal`}
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Valor Total a Prazo (R$)</FormLabel>
+                                        <FormLabel>Valor Unitário a Prazo (R$)</FormLabel>
                                         <FormControl>
-                                            <Input type="text" {...field} value={field.value?.toLocaleString('pt-BR') ?? ''} onChange={(e) => handlePriceChange(e, index, 'installmentPriceTotal')} placeholder="3.205,00"/>
+                                            <Input type="text" value={field.value?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) ?? ''} onChange={(e) => handlePriceChange(e, index, 'installmentPriceTotal')} placeholder="3.205,00"/>
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -427,7 +447,7 @@ export function ProposalFormDialog({ isOpen, onOpenChange, client }: ProposalFor
                          />
                     </div>
                 )})}
-                <Button type="button" variant="outline" size="sm" onClick={() => append({ name: "", cashPrice: 0, sku: "", installmentPriceTotal: undefined, installments: undefined, photoUrl: "" })}>
+                <Button type="button" variant="outline" size="sm" onClick={() => append({ name: "", quantity: 1, cashPrice: 0, sku: "", installmentPriceTotal: undefined, installments: undefined, photoUrl: "" })}>
                     <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Outro Produto
                 </Button>
 

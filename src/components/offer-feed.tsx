@@ -13,7 +13,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Flame, PlusCircle, CheckCircle, Clock, Share2, Copy } from 'lucide-react';
+import { Flame, PlusCircle, CheckCircle, Clock, Share2, Copy, ExternalLink, Link as LinkIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { toggleOfferLike } from '@/app/actions';
 import { cn } from '@/lib/utils';
@@ -22,6 +22,7 @@ import { ptBR } from 'date-fns/locale';
 import Image from 'next/image';
 import { OfferForm } from './offer-form';
 import { OfferShareDialog } from './offer-share-dialog';
+import Link from 'next/link';
 
 interface OfferFeedProps {
   offers: Offer[];
@@ -75,6 +76,11 @@ export function OfferFeed({ offers, isLoading, onOfferCreated, onOfferLiked, cur
     }, () => {
         toast({ variant: "destructive", title: "Erro", description: `Não foi possível copiar o ${fieldName.toLowerCase()}.` });
     });
+  };
+
+  const handleCopyOfferLink = (offerId: string) => {
+    const link = `${window.location.origin}/oferta/${offerId}`;
+    handleCopy(link, "Link da Oferta");
   };
 
   return (
@@ -166,8 +172,20 @@ export function OfferFeed({ offers, isLoading, onOfferCreated, onOfferLiked, cur
                                 </Button>
                                 <Button onClick={() => handleShareClick(offer)} variant="outline">
                                     <Share2 className="mr-2 h-4 w-4" />
-                                    Compartilhar
+                                    Compartilhar via WhatsApp
                                 </Button>
+                                <div className='flex gap-2'>
+                                    <Link href={`/oferta/${offer.id}`} passHref asChild>
+                                      <Button variant='outline' className='w-full'>
+                                          <ExternalLink className="mr-2 h-4 w-4" />
+                                          Ver Página
+                                      </Button>
+                                    </Link>
+                                    <Button onClick={() => handleCopyOfferLink(offer.id)} variant='outline' size='icon'>
+                                        <LinkIcon className="h-4 w-4" />
+                                    </Button>
+                                </div>
+
                                 {offer.status === 'pending' && <p className="text-xs text-center text-amber-600">Aguardando aprovação do admin</p>}
                             </CardFooter>
                         </Card>
