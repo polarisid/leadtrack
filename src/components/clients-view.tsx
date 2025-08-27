@@ -3,7 +3,7 @@
 'use client';
 
 import { useState, useMemo, useTransition, useRef, useEffect, useCallback } from 'react';
-import { Client, ClientStatus, clientStatuses, ProductCategory, productCategories, RecentSale, MessageTemplate, Tag, Offer, Reminder } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, ProductCategory, productCategories, RecentSale, MessageTemplate, Tag, Offer, Reminder, Campaign, CampaignLead } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -41,6 +41,16 @@ import {
     CardTitle,
     CardDescription,
 } from '@/components/ui/card';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ClientForm } from './client-form';
 import { StatusBadge } from './status-badge';
 import {
@@ -69,19 +79,10 @@ import {
   FileText,
   Bell,
   CheckCircle,
+  Megaphone,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead, getTags, updateClientTags, getOffers, getReminders, updateReminderStatus } from '@/app/actions';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { deleteClient, updateClientStatus, getClients, getRecentSales, cancelSale, getMessageTemplates, getUnclaimedLeads, claimLead, getTags, updateClientTags, getOffers, getReminders, updateReminderStatus, getCampaignsForUserGroup, getAvailableCampaignLeads, addClient } from '@/app/actions';
 import { useAuth } from '@/context/auth-context';
 import { auth } from '@/lib/firebase';
 import { signOut } from 'firebase/auth';
@@ -100,8 +101,102 @@ import { SellerPerformanceView } from './seller-performance-view';
 import { OfferFeed } from './offer-feed';
 import { Badge } from './ui/badge';
 import { ProposalFormDialog } from './proposal-form-dialog';
-import { Checkbox } from './ui/checkbox';
+import { ClientDeleteDialog } from './client-delete-dialog';
 
+
+interface CampaignLeadsTableProps {
+    campaign: Campaign;
+    onLeadClaimed: () => void;
+}
+
+function CampaignLeadsTable({ campaign, onLeadClaimed }: CampaignLeadsTableProps) {
+    const [leads, setLeads] = useState<CampaignLead[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isClaiming, startClaiming] = useTransition();
+    const { toast } = useToast();
+    const { user, userProfile } = useAuth();
+    
+    const fetchLeads = useCallback(() => {
+        setIsLoading(true);
+        getAvailableCampaignLeads(campaign.id)
+            .then(setLeads)
+            .catch(() => toast({ variant: "destructive", title: "Erro", description: "Não foi possível buscar os leads da campanha." }))
+            .finally(() => setIsLoading(false));
+    }, [campaign.id, toast]);
+
+    useEffect(() => {
+        fetchLeads();
+    }, [fetchLeads]);
+
+    const handleClaimLead = (lead: CampaignLead) => {
+        if (!user || !userProfile) return;
+        
+        startClaiming(async () => {
+             const remarketingText = Object.entries(lead.originalData)
+                .filter(([key]) => !['nome cliente', 'name', 'nome', 'cidade', 'city', 'contato', 'contact', 'telefone'].includes(key.toLowerCase().trim()))
+                .map(([key, value]) => `${key}: ${value}`)
+                .join('\n');
+
+            const result = await addClient({
+                name: lead.name,
+                city: lead.city || 'Não informado',
+                contact: lead.contact || 'Não informado',
+                desiredProduct: "Outros",
+                status: "Novo Lead",
+                remarketingReminder: remarketingText,
+                tagIds: campaign.defaultTagId ? [campaign.defaultTagId] : [],
+                campaignId: campaign.id,
+                campaignLeadId: lead.id,
+            }, user.uid);
+
+            if (result.success) {
+                toast({ title: "Lead pego com sucesso!" });
+                onLeadClaimed(); // This should trigger a refresh in the parent
+                fetchLeads(); // Re-fetch leads for this specific campaign table
+            } else {
+                toast({ variant: "destructive", title: "Erro ao pegar lead", description: result.error?.formErrors?.join(', ') || result.error?.fieldErrors?.contact?.[0] || 'Ocorreu um erro.' });
+            }
+        });
+    }
+
+    if (isLoading) {
+        return (
+            <div className="space-y-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+            </div>
+        )
+    }
+
+    if (leads.length === 0) {
+        return <p className="text-center text-muted-foreground text-sm p-4">Nenhum lead disponível nesta campanha no momento.</p>
+    }
+
+    return (
+        <div className="max-h-60 overflow-y-auto">
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead>Nome</TableHead>
+                        <TableHead className="text-right">Ação</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    {leads.map(lead => (
+                        <TableRow key={lead.id}>
+                            <TableCell className="font-medium">{lead.name}</TableCell>
+                            <TableCell className="text-right">
+                                <Button size="sm" variant="secondary" onClick={() => handleClaimLead(lead)} disabled={isClaiming}>
+                                    {isClaiming ? <Loader2 className="h-4 w-4 animate-spin" /> : "Pegar Lead"}
+                                </Button>
+                            </TableCell>
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
+        </div>
+    );
+}
 
 export function ClientsView() {
   const { user, userProfile } = useAuth();
@@ -135,6 +230,10 @@ export function ClientsView() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [isLoadingOffers, setIsLoadingOffers] = useState(true);
+
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(true);
+
 
   const [isPending, startTransition] = useTransition();
   const [isClaiming, startClaimingTransition] = useTransition();
@@ -188,16 +287,27 @@ export function ClientsView() {
     }
   }, [userProfile?.groupId, toast]);
 
+  const fetchCampaigns = useCallback(() => {
+    if (userProfile?.groupId) {
+        setIsLoadingCampaigns(true);
+        getCampaignsForUserGroup(userProfile.groupId)
+            .then(setCampaigns)
+            .catch(() => toast({ variant: "destructive", title: "Erro", description: "Não foi possível buscar as campanhas." }))
+            .finally(() => setIsLoadingCampaigns(false));
+    }
+  }, [userProfile?.groupId, toast]);
+
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData]);
 
   useEffect(() => {
     fetchGroupLeads();
-  }, [fetchGroupLeads]);
+    fetchCampaigns();
+  }, [fetchGroupLeads, fetchCampaigns]);
 
   useEffect(() => {
-    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
+    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
     audio.preload = 'auto';
     audioRef.current = audio;
   }, []);
@@ -355,15 +465,16 @@ export function ClientsView() {
     });
   };
 
-  const handleDeleteClient = useCallback((id: string) => {
+  const handleDeleteConfirmed = useCallback((client: Client, reason?: string) => {
     if (!user) return;
     startTransition(async () => {
         const originalClients = [...clients];
-        setClients(prevClients => prevClients.filter(c => c.id !== id));
+        setClients(prevClients => prevClients.filter(c => c.id !== client.id));
 
-        const result = await deleteClient(id, user.uid);
+        const result = await deleteClient(client.id, user.uid, reason);
         if(result.success) {
             toast({ title: 'Cliente deletado com sucesso!' });
+            setClientToDelete(null);
         } else {
             setClients(originalClients);
             toast({ variant: 'destructive', title: 'Erro ao deletar cliente.', description: result.error || "Verifique suas permissões no Firestore." });
@@ -489,7 +600,7 @@ export function ClientsView() {
 
       <main className="flex-1 container mx-auto p-4 sm:p-6 lg:p-8">
         <Tabs defaultValue="clientes" className="w-full">
-             <TabsList className="grid w-full grid-cols-5 max-w-3xl mx-auto mb-6 h-auto">
+             <TabsList className="grid w-full grid-cols-5 max-w-4xl mx-auto mb-6 h-auto">
                 <TabsTrigger value="clientes" className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
                     <LayoutGrid className="h-5 w-5" />
                     <span className="hidden sm:inline">Clientes</span>
@@ -515,15 +626,15 @@ export function ClientsView() {
                         {pendingReminders.length}
                     </Badge>
                 </TabsTrigger>
-                <TabsTrigger value="grupo" disabled={!userProfile?.groupId} className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
-                    <Users className="h-5 w-5" />
-                    <span className="hidden sm:inline">Grupo</span>
-                    {userProfile?.groupId && (
+                <TabsTrigger value="campaigns" disabled={campaigns.length === 0} className="flex-col md:flex-row h-auto py-2 md:py-1.5 gap-1">
+                    <Megaphone className="h-5 w-5" />
+                    <span className="hidden sm:inline">Campanhas</span>
+                    {campaigns.length > 0 && (
                         <Badge
-                            variant={unclaimedLeads.length > 0 ? 'default' : 'secondary'}
+                            variant='default'
                             className="ml-0 sm:ml-2 rounded-full"
                         >
-                            {unclaimedLeads.length}
+                            {campaigns.length}
                         </Badge>
                     )}
                 </TabsTrigger>
@@ -692,18 +803,16 @@ export function ClientsView() {
                                                     </DropdownMenuSubTrigger>
                                                     <DropdownMenuPortal>
                                                         <DropdownMenuSubContent>
-                                                            {tags.map((tag) => (
-                                                                <DropdownMenuCheckboxItem
-                                                                    key={tag.id}
-                                                                    checked={client.tagIds?.includes(tag.id)}
-                                                                    onSelect={(e) => e.preventDefault()}
-                                                                    onCheckedChange={(isChecked) => handleTagChange(client, tag.id, isChecked)}
-                                                                >
-                                                                    <div className="h-2 w-2 rounded-full mr-2" style={{ backgroundColor: tag.color }}></div>
-                                                                    {tag.name}
-                                                                </DropdownMenuCheckboxItem>
-                                                            ))}
-                                                            {tags.length === 0 && <DropdownMenuItem disabled>Nenhuma tag criada.</DropdownMenuItem>}
+                                                        {tags.map((tag) => (
+                                                            <DropdownMenuCheckboxItem
+                                                            key={tag.id}
+                                                            checked={client.tagIds?.includes(tag.id)}
+                                                            onCheckedChange={(isChecked) => handleTagChange(client, tag.id, !!isChecked)}
+                                                            >
+                                                            {tag.name}
+                                                            </DropdownMenuCheckboxItem>
+                                                        ))}
+                                                        {tags.length === 0 && <DropdownMenuItem disabled>Nenhuma tag criada.</DropdownMenuItem>}
                                                         </DropdownMenuSubContent>
                                                     </DropdownMenuPortal>
                                                 </DropdownMenuSub>
@@ -712,7 +821,7 @@ export function ClientsView() {
                                                     className="text-destructive focus:text-destructive"
                                                     onSelect={() => setClientToDelete(client)}
                                                 >
-                                                    <Trash2 className="mr-2 h-4 w-4"/>
+                                                    <Trash2 className="mr-2 h-4 w-4" />
                                                     Deletar
                                                 </DropdownMenuItem>
                                             </DropdownMenuContent>
@@ -723,29 +832,23 @@ export function ClientsView() {
                                     </TableBody>
                                 </Table>
                                 {filteredClients.length === 0 && (
-                                    <div className="text-center p-8 text-muted-foreground">
-                                        Nenhum cliente encontrado.
-                                    </div>
+                                    <p className="text-center text-sm text-muted-foreground p-8">Nenhum cliente encontrado.</p>
                                 )}
                             </Card>
                         </div>
 
-                        <div className="grid gap-4 md:hidden">
+                        <div className="md:hidden grid grid-cols-1 gap-4">
                             {filteredClients.map((client) => {
                                 const isInactive = client.updatedAt &&
                                                 isBefore(new Date(client.updatedAt), fifteenDaysAgo) &&
                                                 (client.status === 'Novo Lead' || client.status === 'Em negociação');
                                 const clientTags = tags.filter(tag => client.tagIds?.includes(tag.id));
                                 return (
-                                <Card 
-                                    key={client.id} 
-                                    onClick={() => handleViewDetails(client.id)}
-                                    className={cn("cursor-pointer", isInactive && "bg-red-100/50 dark:bg-red-900/20 border-red-200 dark:border-red-900/50")}
-                                >
-                                    <CardHeader>
-                                        <div className="flex justify-between items-start gap-4">
-                                            <div className={cn("flex-1 min-w-0", isInactive && "text-red-900 dark:text-red-200")}>
-                                                <CardTitle className="break-words">{client.name}</CardTitle>
+                                <Card key={client.id} className={cn(isInactive && "bg-red-100/50 dark:bg-red-900/20 border-red-200 dark:border-red-900/30 text-red-900 dark:text-red-200")}>
+                                    <CardHeader onClick={() => handleViewDetails(client.id)}>
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <CardTitle className="text-lg">{client.name}</CardTitle>
                                                 <div className="flex flex-wrap gap-1 mt-2">
                                                     {clientTags.map(tag => (
                                                         <Badge key={tag.id} variant="secondary" style={{ backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40`}} className="font-normal">
@@ -753,19 +856,15 @@ export function ClientsView() {
                                                         </Badge>
                                                     ))}
                                                 </div>
-                                                <StatusBadge status={client.status} className="mt-2" />
                                             </div>
-                                        
-                                            <div onClick={(e) => e.stopPropagation()}>
                                             <DropdownMenu>
                                             <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" className="h-8 w-8 p-0 flex-shrink-0" disabled={isPending}>
+                                                <Button variant="ghost" className="h-8 w-8 p-0 -mr-2 -mt-2" disabled={isPending} onClick={(e) => e.stopPropagation()}>
                                                 <span className="sr-only">Abrir menu</span>
                                                 <MoreHorizontal className="h-4 w-4" />
                                                 </Button>
                                             </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end">
-                                                <DropdownMenuLabel>Ações</DropdownMenuLabel>
+                                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                                                 <DropdownMenuItem onSelect={() => handleEditClient(client)}>
                                                     <Edit className="mr-2 h-4 w-4" />
                                                     <span>Editar</span>
@@ -789,7 +888,7 @@ export function ClientsView() {
                                                     </DropdownMenuSubContent>
                                                 </DropdownMenuPortal>
                                                 </DropdownMenuSub>
-                                                <DropdownMenuSub>
+                                                 <DropdownMenuSub>
                                                     <DropdownMenuSubTrigger>
                                                         <TagIcon className="mr-2 h-4 w-4" />
                                                         <span>Mudar Tags</span>
@@ -798,13 +897,11 @@ export function ClientsView() {
                                                         <DropdownMenuSubContent>
                                                             {tags.map((tag) => (
                                                                 <DropdownMenuCheckboxItem
-                                                                    key={tag.id}
-                                                                    checked={client.tagIds?.includes(tag.id)}
-                                                                    onSelect={(e) => e.preventDefault()}
-                                                                    onCheckedChange={(isChecked) => handleTagChange(client, tag.id, isChecked)}
+                                                                key={tag.id}
+                                                                checked={client.tagIds?.includes(tag.id)}
+                                                                onCheckedChange={(isChecked) => handleTagChange(client, tag.id, !!isChecked)}
                                                                 >
-                                                                    <div className="h-2 w-2 rounded-full mr-2" style={{ backgroundColor: tag.color }}></div>
-                                                                    {tag.name}
+                                                                {tag.name}
                                                                 </DropdownMenuCheckboxItem>
                                                             ))}
                                                             {tags.length === 0 && <DropdownMenuItem disabled>Nenhuma tag criada.</DropdownMenuItem>}
@@ -816,42 +913,37 @@ export function ClientsView() {
                                                     className="text-destructive focus:text-destructive"
                                                     onSelect={() => setClientToDelete(client)}
                                                 >
-                                                    <Trash2 className="mr-2 h-4 w-4"/>
+                                                    <Trash2 className="mr-2 h-4 w-4" />
                                                     Deletar
                                                 </DropdownMenuItem>
                                             </DropdownMenuContent>
                                             </DropdownMenu>
-                                            </div>
                                         </div>
                                     </CardHeader>
-                                    <CardContent className="space-y-2 text-sm">
-                                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-muted-foreground">
-                                            <div className="flex items-start gap-2 min-w-0">
-                                                <MapPin className="h-4 w-4 flex-shrink-0 mt-0.5"/>
-                                                <span className="break-words">{client.city}</span>
-                                            </div>
-                                            <div className="flex items-start gap-2 min-w-0">
-                                                <Phone className="h-4 w-4 flex-shrink-0 mt-0.5"/>
-                                                <span className="break-words">{client.contact}</span>
-                                            </div>
-                                            <div className="flex items-start gap-2 min-w-0">
-                                                <ShoppingBag className="h-4 w-4 flex-shrink-0 mt-0.5"/>
-                                                <span className="break-words">{client.desiredProduct}</span>
-                                            </div>
-                                            <div className="flex items-start gap-2 min-w-0">
-                                                <Clock className="h-4 w-4 flex-shrink-0 mt-0.5"/>
-                                                <span className="break-words">
-                                                    {client.updatedAt ? formatDistanceToNow(new Date(client.updatedAt), { addSuffix: true, locale: ptBR }) : '-'}
-                                                </span>
-                                            </div>
+                                    <CardContent className="space-y-3 text-sm" onClick={() => handleViewDetails(client.id)}>
+                                        <div className="flex items-center gap-3 text-muted-foreground">
+                                            <MapPin className="h-4 w-4" />
+                                            <span>{client.city}</span>
+                                        </div>
+                                        <div className="flex items-center gap-3 text-muted-foreground">
+                                            <Phone className="h-4 w-4" />
+                                            <span>{client.contact}</span>
+                                        </div>
+                                        <div className="flex items-center gap-3 text-muted-foreground">
+                                            <ShoppingBag className="h-4 w-4" />
+                                            <span>{client.desiredProduct}</span>
+                                        </div>
+                                        <div className="flex items-center gap-3 text-muted-foreground">
+                                            <Clock className="h-4 w-4" />
+                                            <span>
+                                                Última atualização: {client.updatedAt ? formatDistanceToNow(new Date(client.updatedAt), { addSuffix: true, locale: ptBR }) : '-'}
+                                            </span>
                                         </div>
                                     </CardContent>
                                 </Card>
-                            )})}
+                                )})}
                             {filteredClients.length === 0 && (
-                                    <div className="text-center p-8 text-muted-foreground">
-                                        Nenhum cliente encontrado.
-                                    </div>
+                                    <p className="text-center text-sm text-muted-foreground p-8">Nenhum cliente encontrado.</p>
                                 )}
                         </div>
                     </>
@@ -859,8 +951,8 @@ export function ClientsView() {
             </TabsContent>
 
             <TabsContent value="offers">
-                <OfferFeed
-                    offers={offers}
+                <OfferFeed 
+                    offers={offers} 
                     isLoading={isLoadingOffers}
                     onOfferCreated={onOfferCreated}
                     onOfferLiked={onOfferLiked}
@@ -869,18 +961,16 @@ export function ClientsView() {
                     clients={clients}
                 />
             </TabsContent>
-
+            
             <TabsContent value="reminders">
-                 <Card>
+                <Card>
                     <CardHeader>
                         <CardTitle>Lembretes Pendentes</CardTitle>
-                        <CardDescription>
-                            Todas as suas tarefas e lembretes que ainda não foram concluídos.
-                        </CardDescription>
+                        <CardDescription>Todas as suas tarefas e lembretes que ainda não foram concluídos.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        {isLoadingReminders ? <Skeleton className="h-32 w-full" /> : 
-                         pendingReminders.length === 0 ? <p className="text-center text-muted-foreground p-8">Você não tem lembretes pendentes. 🎉</p> : (
+                        {isLoadingReminders ? <Skeleton className="h-20 w-full" /> : 
+                         pendingReminders.length === 0 ? <p className="text-center text-muted-foreground text-sm p-8">Você não tem lembretes pendentes. 🎉</p> : (
                             <Table>
                                 <TableHeader>
                                     <TableRow>
@@ -892,13 +982,13 @@ export function ClientsView() {
                                 </TableHeader>
                                 <TableBody>
                                     {pendingReminders.map((reminder) => (
-                                        <TableRow key={reminder.id} className={cn(isPast(parseISO(reminder.reminderDate)) && 'bg-red-50 dark:bg-red-900/20')}>
+                                        <TableRow key={reminder.id} className={cn(isPast(parseISO(reminder.reminderDate)) && 'bg-destructive/10')}>
                                             <TableCell className="font-medium">{reminder.clientName}</TableCell>
                                             <TableCell>{reminder.text}</TableCell>
                                             <TableCell>{format(parseISO(reminder.reminderDate), 'dd/MM/yyyy', { locale: ptBR })}</TableCell>
                                             <TableCell className="text-right">
-                                                <Button size="sm" variant="outline" onClick={() => handleToggleReminder(reminder.clientId, reminder.id, true)} disabled={isPending}>
-                                                    <CheckCircle className="mr-2 h-4 w-4" />
+                                                <Button size="sm" onClick={() => handleToggleReminder(reminder.clientId, reminder.id, true)}>
+                                                    <CheckCircle className="mr-2 h-4 w-4"/>
                                                     Concluir
                                                 </Button>
                                             </TableCell>
@@ -912,50 +1002,30 @@ export function ClientsView() {
                 </Card>
             </TabsContent>
 
-            <TabsContent value="grupo">
+            <TabsContent value="campaigns">
                 <Card>
                     <CardHeader>
-                        <CardTitle>Leads do Grupo</CardTitle>
-                        <CardDescription>
-                            {userProfile?.groupId 
-                                ? "Leads capturados pela página do seu grupo. Pegue um lead para começar a trabalhar com ele."
-                                : "Você não está em um grupo. Peça ao administrador para te adicionar a um."
-                            }
-                        </CardDescription>
+                        <CardTitle>Campanhas Ativas</CardTitle>
+                        <CardDescription>Veja as campanhas disponíveis para o seu grupo e pegue novos leads para trabalhar.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        {isLoadingUnclaimed ? <Skeleton className="h-32 w-full" /> : 
-                         !userProfile?.groupId ? null :
-                         unclaimedLeads.length === 0 ? <p className="text-center text-muted-foreground p-8">Nenhum lead disponível para o grupo no momento.</p> : (
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Nome</TableHead>
-                                        <TableHead>Cidade</TableHead>
-                                        <TableHead>Produto Desejado</TableHead>
-                                        <TableHead>Indicação</TableHead>
-                                        <TableHead>Capturado em</TableHead>
-                                        <TableHead className="text-right">Ação</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {unclaimedLeads.map((lead) => (
-                                        <TableRow key={lead.id}>
-                                            <TableCell className="font-medium">{lead.name}</TableCell>
-                                            <TableCell>{lead.city}</TableCell>
-                                            <TableCell>{lead.desiredProduct}</TableCell>
-                                            <TableCell>{lead.referredBy || "-"}</TableCell>
-                                            <TableCell>{formatDistanceToNow(new Date(lead.createdAt), { addSuffix: true, locale: ptBR })}</TableCell>
-                                            <TableCell className="text-right">
-                                                <Button size="sm" onClick={() => handleClaimLead(lead.id)} disabled={isClaiming}>
-                                                    {isClaiming ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Hand className="mr-2 h-4 w-4" />}
-                                                    Pegar Lead
-                                                </Button>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
+                        {isLoadingCampaigns ? <Skeleton className="h-40" /> : 
+                         campaigns.length === 0 ? <p className="text-center text-muted-foreground">Nenhuma campanha ativa para seu grupo no momento.</p> : (
+                            <Accordion type="single" collapsible className="w-full">
+                                {campaigns.map(campaign => (
+                                    <AccordionItem value={campaign.id} key={campaign.id}>
+                                        <AccordionTrigger>
+                                            {campaign.name}
+                                        </AccordionTrigger>
+                                        <AccordionContent>
+                                            <div className="space-y-4">
+                                                <p className="text-sm text-muted-foreground">{campaign.description}</p>
+                                                <CampaignLeadsTable campaign={campaign} onLeadClaimed={() => { fetchAllData(); fetchGroupLeads(); }} />
+                                            </div>
+                                        </AccordionContent>
+                                    </AccordionItem>
+                                ))}
+                            </Accordion>
                          )
                         }
                     </CardContent>
@@ -968,77 +1038,36 @@ export function ClientsView() {
         </Tabs>
       </main>
 
-      <footer className="py-4 text-center text-sm text-muted-foreground border-t">
+      <footer className="py-4 text-center text-xs text-muted-foreground border-t">
         Desenvolvido por Daniel Carvalho
       </footer>
 
-      <ClientForm
-        isOpen={isFormOpen}
-        onOpenChange={setIsFormOpen}
-        client={editingClient}
-        onClientAdded={handleClientAdded}
-        onClientUpdated={handleClientUpdated}
-        availableTags={tags}
-      />
-
-      <ClientImportDialog 
-        isOpen={isImportOpen}
-        onOpenChange={setIsImportOpen}
-        onClientsImported={handleClientsImported}
-      />
-
-      <ClientDetailSheet
-        isOpen={isDetailSheetOpen}
-        onOpenChange={handleDetailSheetOpenChange}
-        client={selectedClient}
-        templates={messageTemplates}
-        tags={tags}
-        onClientUpdated={handleClientUpdated}
-        onOpenProposalDialog={handleOpenProposalDialog}
-        onStatusChange={handleStatusChange}
-      />
+      {isFormOpen && <ClientForm isOpen={isFormOpen} onOpenChange={setIsFormOpen} client={editingClient} onClientAdded={handleClientAdded} onClientUpdated={handleClientUpdated} availableTags={tags} />}
+      <ClientImportDialog isOpen={isImportOpen} onOpenChange={setIsImportOpen} onClientsImported={handleClientsImported} />
+      {selectedClient && <ClientDetailSheet isOpen={isDetailSheetOpen} onOpenChange={handleDetailSheetOpenChange} client={selectedClient} templates={messageTemplates} tags={tags} onClientUpdated={handleClientUpdated} onOpenProposalDialog={handleOpenProposalDialog} onStatusChange={handleStatusChange} />}
       
-      <ProposalFormDialog
-        isOpen={!!clientForProposal}
-        onOpenChange={(open) => !open && setClientForProposal(null)}
-        client={clientForProposal}
-      />
+      {clientForProposal && <ProposalFormDialog isOpen={!!clientForProposal} onOpenChange={() => setClientForProposal(null)} client={clientForProposal} />}
 
       <SaleValueDialog
         isOpen={!!saleValueClient}
-        onOpenChange={(open) => !open && setSaleValueClient(null)}
+        onOpenChange={() => setSaleValueClient(null)}
         onConfirm={handleConfirmSale}
         isPending={isPending}
       />
+      
+      {clientToDelete && <ClientDeleteDialog 
+        isOpen={!!clientToDelete}
+        onOpenChange={() => setClientToDelete(null)}
+        client={clientToDelete}
+        onConfirmDelete={handleDeleteConfirmed}
+        isPending={isPending}
+      />}
 
-      <AlertDialog open={!!clientToDelete} onOpenChange={(open) => !open && setClientToDelete(null)}>
-        <AlertDialogContent>
-            <AlertDialogHeader>
-            <AlertDialogTitle>Você tem certeza?</AlertDialogTitle>
-            <AlertDialogDescription>
-                Essa ação não pode ser desfeita. Isso irá deletar permanentemente o cliente.
-            </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setClientToDelete(null)}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction 
-                onClick={() => {
-                    if (clientToDelete) {
-                        handleDeleteClient(clientToDelete.id);
-                    }
-                    setClientToDelete(null);
-                }} 
-                className="bg-destructive hover:bg-destructive/90">
-                Deletar
-            </AlertDialogAction>
-            </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
+      {/* Legacy AlertDialog - Keep for sale cancellation */}
       <AlertDialog open={!!saleToCancel} onOpenChange={(open) => !open && setSaleToCancel(null)}>
         <AlertDialogContent>
             <AlertDialogHeader>
-            <AlertDialogTitle>Cancelar Venda?</AlertDialogTitle>
+            <AlertDialogTitle>Cancelar a Venda?</AlertDialogTitle>
             <AlertDialogDescription>
                 Esta ação não pode ser desfeita. O status do cliente "{saleToCancel?.clientName}" será revertido para "Pós-venda" e o registro desta venda será removido.
             </AlertDialogDescription>
@@ -1046,11 +1075,10 @@ export function ClientsView() {
             <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setSaleToCancel(null)}>Manter Venda</AlertDialogCancel>
             <AlertDialogAction 
-                onClick={handleCancelSale}
+                onClick={handleCancelSale} 
                 className="bg-destructive hover:bg-destructive/90"
-                disabled={isPending}
-            >
-                {isPending ? "Cancelando..." : "Confirmar Cancelamento"}
+                disabled={isPending}>
+                {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sim, Cancelar Venda"}
             </AlertDialogAction>
             </AlertDialogFooter>
         </AlertDialogContent>

@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -48,6 +49,9 @@ const DialogContent = React.forwardRef<
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
+       {/* Adding a default title and description for accessibility, can be overridden by children. */}
+      <DialogPrimitive.Title className="sr-only">Dialog</DialogPrimitive.Title>
+      <DialogPrimitive.Description className="sr-only">A dialog box with content.</DialogPrimitive.Description>
     </DialogPrimitive.Content>
   </DialogPortal>
 ))

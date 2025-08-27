@@ -51,6 +51,9 @@ const formSchema = z.object({
   status: z.enum(clientStatuses),
   remarketingReminder: z.string().optional(),
   tagIds: z.array(z.string()).optional(),
+  campaignId: z.string().optional(),
+  campaignLeadId: z.string().optional(),
+  originalCampaignData: z.record(z.string()).optional(),
 });
 
 type ClientFormValues = z.infer<typeof formSchema>;

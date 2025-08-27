@@ -16,10 +16,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon, Sparkles, BrainCircuit, Lightbulb, Flame, CheckCircle, XCircle, Clock, Loader2, Brush, UploadCloud, Link as LinkIcon, Wrench } from 'lucide-react';
+import { LogOut, ShieldCheck, Users, AlertCircle, MoreHorizontal, Edit, KeyRound, Trash2, UserCheck, UserX, DollarSign, Target, BarChart3, Trophy, TrendingUp, TrendingDown, Minus, Repeat, Percent, PlusCircle, Users2, CreditCard, AlertTriangle, MessageSquare, Goal as GoalIcon, Link2, Tag as TagIcon, Sparkles, BrainCircuit, Lightbulb, Flame, CheckCircle, XCircle, Clock, Loader2, Brush, UploadCloud, Link as LinkIcon, Wrench, History, Megaphone } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag, getAdminDailySummaryAction, getAllOffersForAdmin, updateOfferStatus, deleteOffer, updateBrandingSettings, getBrandingSettings, getInstallationServices, deleteInstallationService } from '@/app/actions';
-import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag, AdminDailySummaryOutput, Offer, OfferStatus, InstallationService } from '@/lib/types';
+import { getUsersForAdmin, sendPasswordResetForUser, deleteUserRecord, updateUserStatus, getDashboardAnalytics, getSellerAnalytics, getGroups, createGroup, deleteGroup, getMessageTemplates, deleteMessageTemplate, getGoals, createOrUpdateGroupGoal, updateIndividualGoal, deleteGoal, getTags, deleteTag, getAdminDailySummaryAction, getAllOffersForAdmin, updateOfferStatus, deleteOffer, updateBrandingSettings, getBrandingSettings, getInstallationServices, deleteInstallationService, getActivityLogs, getCampaigns, deleteCampaign } from '@/app/actions';
+import { UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, ClientStatus, AnalyticsPeriod, Group, MessageTemplate, Goal, UserGoal, Tag, AdminDailySummaryOutput, Offer, OfferStatus, InstallationService, ActivityLog, Campaign } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -65,7 +65,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from '@/components/ui/badge';
-import { format, subMonths, isPast } from 'date-fns';
+import { format, subMonths, isPast, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import Image from "next/image";
 import { Skeleton } from '@/components/ui/skeleton';
@@ -77,6 +77,7 @@ import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { TooltipProvider, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
 const UserEditDialog = dynamic(() => import('@/components/admin/user-edit-dialog').then(mod => mod.UserEditDialog));
 const UserGroupDialog = dynamic(() => import('@/components/admin/user-group-dialog').then(mod => mod.UserGroupDialog));
@@ -86,6 +87,9 @@ const TagEditDialog = dynamic(() => import('@/components/admin/tag-edit-dialog')
 const SellerLeadsDialog = dynamic(() => import('@/components/admin/seller-leads-dialog').then(mod => mod.SellerLeadsDialog));
 const OfferForm = dynamic(() => import('@/components/offer-form').then(mod => mod.OfferForm));
 const ServiceEditDialog = dynamic(() => import('@/components/admin/service-edit-dialog').then(mod => mod.ServiceEditDialog));
+const CampaignForm = dynamic(() => import('@/components/admin/campaign-form').then(mod => mod.CampaignForm));
+const CampaignDetailDialog = dynamic(() => import('@/components/admin/campaign-detail-dialog').then(mod => mod.CampaignDetailDialog));
+const CampaignLeadArchiveDialog = dynamic(() => import('@/components/admin/campaign-lead-archive-dialog').then(mod => mod.CampaignLeadArchiveDialog));
 
 
 const chartConfig = {
@@ -198,6 +202,20 @@ export default function AdminDashboardPage() {
   const [newGoalValue, setNewGoalValue] = useState('');
   const [goalToDelete, setGoalToDelete] = useState<Goal | null>(null);
   const [individualGoalValues, setIndividualGoalValues] = useState<Record<string, string>>({});
+  
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(true);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [logPeriod, setLogPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [logUserFilter, setLogUserFilter] = useState<string>("all");
+
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(true);
+  const [campaignsError, setCampaignsError] = useState<string | null>(null);
+  const [isCampaignFormOpen, setIsCampaignFormOpen] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
+  const [viewingCampaignId, setViewingCampaignId] = useState<string | null>(null);
+  const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
 
 
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -378,6 +396,32 @@ export default function AdminDashboardPage() {
         });
   }
 
+  const fetchLogs = () => {
+    if (!user) return;
+    setIsLoadingLogs(true);
+    setLogsError(null);
+    getActivityLogs(user.uid, logPeriod, logUserFilter === "all" ? null : logUserFilter)
+      .then(setActivityLogs)
+      .catch(err => {
+        setLogsError(err.message || 'Ocorreu um erro ao buscar o registro de atividades.');
+        toast({ variant: 'destructive', title: 'Erro de Logs', description: 'Não foi possível carregar o registro de atividades.' });
+      })
+      .finally(() => setIsLoadingLogs(false));
+  }
+  
+  const fetchCampaigns = () => {
+    if (!user) return;
+    setIsLoadingCampaigns(true);
+    setCampaignsError(null);
+    getCampaigns(user.uid)
+      .then(setCampaigns)
+      .catch(err => {
+        setCampaignsError(err.message || 'Ocorreu um erro ao buscar as campanhas.');
+        toast({ variant: 'destructive', title: 'Erro de Campanhas', description: 'Não foi possível carregar as campanhas.' });
+      })
+      .finally(() => setIsLoadingCampaigns(false));
+  };
+
   useEffect(() => {
     if (user?.uid) {
         fetchGroups();
@@ -386,6 +430,7 @@ export default function AdminDashboardPage() {
         fetchOffers();
         fetchBranding();
         fetchServices();
+        fetchCampaigns();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -418,6 +463,13 @@ export default function AdminDashboardPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, goalPeriod]);
+
+  useEffect(() => {
+    if (user?.uid) {
+      fetchLogs();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, logPeriod, logUserFilter]);
 
 
   const handleLogout = async () => {
@@ -471,6 +523,8 @@ export default function AdminDashboardPage() {
     fetchOffers();
     fetchBranding();
     fetchServices();
+    fetchLogs();
+    fetchCampaigns();
   };
   
   const handleSendPasswordReset = (email: string) => {
@@ -666,6 +720,25 @@ export default function AdminDashboardPage() {
           }
           setOfferToDelete(null);
       });
+  };
+
+  const handleDeleteCampaign = () => {
+    if (!campaignToDelete || !user) return;
+    startTransition(async () => {
+      const result = await deleteCampaign(campaignToDelete.id, user.uid);
+      if (result.success) {
+        toast({ title: "Sucesso!", description: `Campanha "${campaignToDelete.name}" foi deletada.` });
+        onDataUpdated();
+      } else {
+        toast({ variant: "destructive", title: "Erro", description: result.error });
+      }
+      setCampaignToDelete(null);
+    });
+  };
+
+  const handleOpenCampaignEdit = (campaign: Campaign) => {
+    setEditingCampaign(campaign);
+    setIsCampaignFormOpen(true);
   };
 
 
@@ -1694,6 +1767,172 @@ export default function AdminDashboardPage() {
       </Card>
     );
   };
+  
+  const renderActivityLogContent = () => {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+            <div>
+              <CardTitle>Registro de Atividades</CardTitle>
+              <CardDescription>Veja as ações recentes de todos os usuários no sistema.</CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Select value={logUserFilter} onValueChange={setLogUserFilter}>
+                <SelectTrigger className="w-full sm:w-[180px]">
+                  <SelectValue placeholder="Filtrar por usuário" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os Usuários</SelectItem>
+                  {users.map(u => (
+                    <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={logPeriod} onValueChange={(value) => setLogPeriod(value as any)}>
+                <SelectTrigger className="w-full sm:w-[150px]">
+                  <SelectValue placeholder="Filtrar por período" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="daily">Hoje</SelectItem>
+                  <SelectItem value="weekly">Esta Semana</SelectItem>
+                  <SelectItem value="monthly">Este Mês</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoadingLogs ? (
+            <div className="space-y-2">
+              {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+            </div>
+          ) : logsError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" /><AlertTitle>Erro</AlertTitle><AlertDescription>{logsError}</AlertDescription>
+            </Alert>
+          ) : activityLogs.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Nenhuma atividade registrada para o filtro selecionado.</p>
+          ) : (
+            <div className="border rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Usuário</TableHead>
+                    <TableHead>Ação</TableHead>
+                    <TableHead>Detalhes</TableHead>
+                    <TableHead>Data</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {activityLogs.map(log => (
+                    <TableRow key={log.id}>
+                      <TableCell className="font-medium">{log.actorName}</TableCell>
+                      <TableCell><Badge variant="secondary">{log.action}</Badge></TableCell>
+                      <TableCell className="text-muted-foreground text-sm">{log.details?.summary || 'N/A'}</TableCell>
+                      <TableCell>{formatDistanceToNow(new Date(log.createdAt), { addSuffix: true, locale: ptBR })}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const renderCampaignManagementContent = () => {
+    return (
+      <TooltipProvider>
+        <Card>
+            <CardHeader>
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                    <div>
+                        <CardTitle>Gerenciamento de Campanhas</CardTitle>
+                        <CardDescription>Crie campanhas, importe listas de leads e monitore o progresso.</CardDescription>
+                    </div>
+                    <Button onClick={() => { setEditingCampaign(null); setIsCampaignFormOpen(true); }}>
+                        <PlusCircle className="mr-2 h-4 w-4" />
+                        Criar Campanha
+                    </Button>
+                </div>
+            </CardHeader>
+            <CardContent>
+                {isLoadingCampaigns ? <Skeleton className="h-40 w-full" /> : 
+                 campaignsError ? <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Erro</AlertTitle><AlertDescription>{campaignsError}</AlertDescription></Alert> :
+                 campaigns.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">Nenhuma campanha criada ainda.</p> : (
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Nome</TableHead>
+                                <TableHead>Grupo</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead>Progresso</TableHead>
+                                <TableHead>Criada em</TableHead>
+                                <TableHead className="text-right">Ações</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {campaigns.map(campaign => {
+                                const totalLeads = campaign.leadCount || 0;
+                                const workedLeads = (campaign.claimedCount || 0) + (campaign.convertedCount || 0) + (campaign.archivedCount || 0);
+                                const progress = totalLeads > 0 ? (workedLeads / totalLeads) * 100 : 0;
+                                return (
+                                <TableRow key={campaign.id}>
+                                    <TableCell className="font-medium">{campaign.name}</TableCell>
+                                    <TableCell>{campaign.groupName || 'N/A'}</TableCell>
+                                    <TableCell>
+                                        <Badge variant={campaign.isActive ? 'default' : 'secondary'}>
+                                            {campaign.isActive ? 'Ativa' : 'Inativa'}
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                 <div className="flex items-center gap-2">
+                                                    <Progress value={progress} className="w-24 h-2" />
+                                                    <span className="text-xs text-muted-foreground">{progress.toFixed(0)}%</span>
+                                                </div>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                                <p>Total: {totalLeads} | Trabalhados: {workedLeads}</p>
+                                                <p>Convertidos: {campaign.convertedCount || 0} | Recusados: {campaign.archivedCount || 0}</p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </TableCell>
+                                    <TableCell>{format(new Date(campaign.createdAt), 'dd/MM/yyyy')}</TableCell>
+                                    <TableCell className="text-right">
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button variant="ghost" className="h-8 w-8 p-0">
+                                                    <MoreHorizontal className="h-4 w-4" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem onSelect={() => setViewingCampaignId(campaign.id)}>
+                                                    Ver Detalhes
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onSelect={() => handleOpenCampaignEdit(campaign)}>
+                                                    <Edit className="mr-2 h-4 w-4" /> Editar
+                                                </DropdownMenuItem>
+                                                <DropdownMenuSeparator />
+                                                <DropdownMenuItem onSelect={() => setCampaignToDelete(campaign)} className="text-destructive">
+                                                    <Trash2 className="mr-2 h-4 w-4" /> Excluir
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </TableCell>
+                                </TableRow>
+                            )})}
+                        </TableBody>
+                    </Table>
+                )}
+            </CardContent>
+        </Card>
+      </TooltipProvider>
+    );
+  };
 
 
   return (
@@ -1722,6 +1961,8 @@ export default function AdminDashboardPage() {
               <TabsList className="flex flex-wrap h-auto justify-start">
                 <TabsTrigger value="overview">Visão Geral e Usuários</TabsTrigger>
                 <TabsTrigger value="seller-data">Dados por Vendedor</TabsTrigger>
+                <TabsTrigger value="campaigns">Campanhas</TabsTrigger>
+                <TabsTrigger value="logs">Registro de Atividades</TabsTrigger>
                 <TabsTrigger value="briefing">Briefing Geral</TabsTrigger>
                 <TabsTrigger value="offers">Ofertas</TabsTrigger>
                 <TabsTrigger value="goals">Metas</TabsTrigger>
@@ -1976,6 +2217,14 @@ export default function AdminDashboardPage() {
                 </Card>
               </TabsContent>
               
+              <TabsContent value="campaigns">
+                {renderCampaignManagementContent()}
+              </TabsContent>
+
+              <TabsContent value="logs">
+                {renderActivityLogContent()}
+              </TabsContent>
+              
               <TabsContent value="offers">
                 {renderOfferManagementContent()}
               </TabsContent>
@@ -2069,6 +2318,27 @@ export default function AdminDashboardPage() {
         onOpenChange={() => setViewingSellerLeads(null)}
         seller={viewingSellerLeads}
       />}
+
+      {isCampaignFormOpen && (
+        <CampaignForm
+            isOpen={isCampaignFormOpen}
+            onOpenChange={setIsCampaignFormOpen}
+            onCampaignUpdated={onDataUpdated}
+            campaign={editingCampaign}
+            tags={tags}
+            groups={groups}
+        />
+      )}
+
+      {viewingCampaignId && (
+        <CampaignDetailDialog
+            isOpen={!!viewingCampaignId}
+            onOpenChange={() => setViewingCampaignId(null)}
+            campaignId={viewingCampaignId}
+            adminId={user?.uid || null}
+            onCampaignUpdated={onDataUpdated}
+        />
+      )}
 
       <AlertDialog open={!!userToDelete} onOpenChange={(open) => !open && setUserToDelete(null)}>
         <AlertDialogContent>
@@ -2209,6 +2479,27 @@ export default function AdminDashboardPage() {
             </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+       <AlertDialog open={!!campaignToDelete} onOpenChange={(open) => !open && setCampaignToDelete(null)}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Excluir a campanha "{campaignToDelete?.name}"?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        Esta ação não pode ser desfeita. Todos os leads associados a esta campanha também serão excluídos permanentemente.
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel onClick={() => setCampaignToDelete(null)}>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction 
+                        onClick={handleDeleteCampaign}
+                        className="bg-destructive hover:bg-destructive/90"
+                        disabled={isPending}
+                    >
+                        {isPending ? "Excluindo..." : "Sim, excluir campanha"}
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     </>
   );
 }

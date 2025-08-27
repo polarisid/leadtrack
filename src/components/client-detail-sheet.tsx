@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import {
@@ -10,7 +9,7 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { Client, Comment, MessageTemplate, Tag, LeadAnalysisOutput, ClientStatus, clientStatuses, Reminder, ReminderFormValues } from "@/lib/types";
+import { Client, Comment, MessageTemplate, Tag, LeadAnalysisOutput, ClientStatus, clientStatuses, Reminder, ReminderFormValues, Campaign } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -33,13 +32,15 @@ import {
   Trash2,
   CheckCircle,
   PlusCircle,
+  Megaphone,
+  Repeat,
 } from "lucide-react";
 import { StatusBadge } from "./status-badge";
 import { format, isPast, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { WhatsappIcon } from "./icons/whatsapp-icon";
-import { useState, useEffect, useTransition } from "react";
-import { getComments, addComment, analyzeLeadAction, saveLeadAnalysis, addReminder, updateReminderStatus, deleteReminder } from "@/app/actions";
+import { useState, useEffect, useTransition, useCallback } from "react";
+import { getComments, addComment, analyzeLeadAction, saveLeadAnalysis, addReminder, updateReminderStatus, deleteReminder, getCampaignsForUserGroup } from "@/app/actions";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "./ui/separator";
@@ -56,6 +57,8 @@ import { ReminderSchema } from "@/lib/types";
 import { Form, FormControl, FormField, FormItem, FormMessage } from "./ui/form";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Calendar } from "./ui/calendar";
+import { generateWhatsappLink } from "@/lib/whatsapp-config";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 
 interface ClientDetailSheetProps {
   isOpen: boolean;
@@ -78,7 +81,7 @@ export default function ClientDetailSheet({
   onOpenProposalDialog,
   onStatusChange,
 }: ClientDetailSheetProps) {
-  const { user } = useAuth();
+  const { user, userProfile } = useAuth();
   const { toast } = useToast();
   const [comments, setComments] = useState<Comment[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
@@ -92,6 +95,8 @@ export default function ClientDetailSheet({
   const [analysisResult, setAnalysisResult] = useState<LeadAnalysisOutput | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+
   const reminderForm = useForm<ReminderFormValues>({
     resolver: zodResolver(ReminderSchema),
     defaultValues: {
@@ -99,6 +104,21 @@ export default function ClientDetailSheet({
         reminderDate: undefined,
     },
   });
+
+  const fetchCampaignDetails = useCallback(async () => {
+    if (client?.campaignId && userProfile?.groupId) {
+        try {
+            const campaigns = await getCampaignsForUserGroup(userProfile.groupId);
+            const currentCampaign = campaigns.find(c => c.id === client.campaignId);
+            setCampaign(currentCampaign || null);
+        } catch (error) {
+            console.error("Failed to fetch campaign details:", error);
+            setCampaign(null);
+        }
+    } else {
+        setCampaign(null);
+    }
+  }, [client?.campaignId, userProfile?.groupId]);
 
 
   const fetchClientComments = () => {
@@ -134,6 +154,7 @@ export default function ClientDetailSheet({
     if (isOpen && client) {
         fetchClientComments();
         fetchClientReminders();
+        fetchCampaignDetails();
         if (client.lastAnalysis) {
             setAnalysisResult(client.lastAnalysis);
         }
@@ -141,6 +162,7 @@ export default function ClientDetailSheet({
         setAnalysisResult(null);
         setAnalysisError(null);
         setReminders([]);
+        setCampaign(null);
         reminderForm.reset();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -242,11 +264,20 @@ export default function ClientDetailSheet({
   };
 
   const handleCopyMessage = (message: string) => {
-    navigator.clipboard.writeText(message).then(() => {
+    if (!client) return;
+    const finalMessage = message.replace(/<cliente>/g, client.name.split(' ')[0]);
+    navigator.clipboard.writeText(finalMessage).then(() => {
       toast({ title: "Mensagem copiada!", description: "A mensagem foi copiada para a área de transferência." });
     }, () => {
       toast({ variant: "destructive", title: "Erro", description: "Não foi possível copiar a mensagem." });
     });
+  };
+  
+  const handleSendToWhatsapp = (message: string) => {
+    if (!client) return;
+    const finalMessage = message.replace(/<cliente>/g, client.name.split(' ')[0]);
+    const link = generateWhatsappLink(client, finalMessage);
+    window.open(link, "_blank", "noopener,noreferrer");
   };
 
   if (!client) {
@@ -266,6 +297,12 @@ export default function ClientDetailSheet({
       icon: CalendarIcon,
       label: "Data de Criação",
       value: format(new Date(client.createdAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
+    },
+     {
+      icon: Repeat,
+      label: "Lembrete de Remarketing",
+      value: client.remarketingReminder || "Nenhum",
+      isLongText: true,
     },
   ];
 
@@ -310,13 +347,38 @@ export default function ClientDetailSheet({
               </TabsList>
               
               <TabsContent value="details" className="p-6 space-y-6">
+                {campaign && campaign.script && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Megaphone className="h-5 w-5 text-primary" />
+                        Script da Campanha: {campaign.name}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap border p-3 rounded-md bg-muted/50">
+                        {campaign.script.replace(/<cliente>/g, client.name.split(' ')[0])}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => handleCopyMessage(campaign.script)}>
+                          <Copy className="mr-2 h-4 w-4" />
+                          Copiar Script
+                        </Button>
+                        <Button size="sm" onClick={() => handleSendToWhatsapp(campaign.script)}>
+                          <WhatsappIcon className="mr-2 h-4 w-4" />
+                          Enviar via WhatsApp
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
                 {detailItems.map((item, index) => (
                     <div key={index} className="flex items-start gap-4">
                         <item.icon className="h-5 w-5 text-muted-foreground mt-1 flex-shrink-0" />
                         <div className="min-w-0 flex-1">
                         <p className="text-sm text-muted-foreground">{item.label}</p>
                         <div className="font-medium text-foreground break-words flex items-center gap-2">
-                            <span>{item.value}</span>
+                            <span className={cn(item.isLongText && "whitespace-pre-wrap")}>{item.value}</span>
                             {item.label === "Contato" && client.contact && (
                             <button
                                 onClick={() => setIsWhatsappDialogOpen(true)}

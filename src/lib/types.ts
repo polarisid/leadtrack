@@ -20,6 +20,10 @@ export type AnalyticsPeriod = (typeof analyticsPeriods)[number];
 export const offerStatuses = ['pending', 'approved', 'rejected'] as const;
 export type OfferStatus = (typeof offerStatuses)[number];
 
+export const campaignLeadStatuses = ['available', 'claimed', 'converted', 'archived'] as const;
+export type CampaignLeadStatus = (typeof campaignLeadStatuses)[number];
+
+
 // Offer Schema
 export const OfferSchema = z.object({
   title: z.string().min(3, "O título deve ter pelo menos 3 caracteres."),
@@ -37,8 +41,8 @@ const ProductSchema = z.object({
   quantity: z.number().int().min(1, "A quantidade deve ser pelo menos 1."),
   sku: z.string().optional(),
   photoUrl: z.string().optional(),
-  cashPrice: z.number().positive("O valor à vista deve ser positivo.").or(z.literal(0)),
-  installmentPriceTotal: z.number().positive("O valor a prazo deve ser positivo.").optional(),
+  cashPrice: z.number().positive("O valor unitário à vista deve ser positivo.").or(z.literal(0)),
+  installmentPriceTotal: z.number().positive("O valor unitário a prazo deve ser positivo.").optional(),
   installments: z.number().int().positive("O número de parcelas deve ser positivo.").optional(),
 }).refine(data => {
     // Se um campo de parcela for preenchido, o outro também deve ser.
@@ -177,6 +181,17 @@ export const ProposalTextGeneratorOutputSchema = z.object({
 });
 export type ProposalTextGeneratorOutput = z.infer<typeof ProposalTextGeneratorOutputSchema>;
 
+export interface ActivityLog {
+  id: string;
+  actorId: string;
+  actorName: string;
+  action: string;
+  entityId?: string; // e.g., clientId
+  entityName?: string; // e.g., clientName
+  details?: Record<string, any>;
+  createdAt: string; // ISO String
+}
+
 export interface Reminder {
     id: string;
     text: string;
@@ -203,6 +218,8 @@ export interface Client {
   tagIds?: string[];
   lastAnalysis?: LeadAnalysisOutput;
   reminders?: Reminder[];
+  campaignId?: string;
+  campaignLeadId?: string;
 }
 
 export interface RecentSale {
@@ -308,6 +325,50 @@ export interface InstallationService {
     adminId: string;
     createdAt: string;
 }
+
+export interface Campaign {
+  id: string;
+  name: string;
+  description: string;
+  defaultTagId: string;
+  script: string;
+  adminId: string;
+  groupId: string;
+  groupName?: string;
+  createdAt: string; // ISO String
+  isActive: boolean;
+  leadCount: number;
+  claimedCount?: number;
+  convertedCount?: number;
+  archivedCount?: number;
+}
+
+export interface CampaignLead {
+  id: string;
+  campaignId: string;
+  groupId: string;
+  originalData: Record<string, string>; // From the spreadsheet
+  name: string;
+  city?: string;
+  contact?: string;
+  status: CampaignLeadStatus;
+  claimedBy?: string | null;
+  claimedByName?: string | null;
+  claimedAt?: string | null; // ISO String
+  finalClientId?: string | null;
+  finalClientStatus?: ClientStatus | null;
+  deletionReason?: string | null;
+}
+
+export const CampaignSchema = z.object({
+  name: z.string().min(3, "O nome da campanha é obrigatório."),
+  description: z.string().min(5, "A descrição é obrigatória."),
+  groupId: z.string().min(1, "O grupo é obrigatório."),
+  defaultTagId: z.string().min(1, "Uma tag padrão é obrigatória."),
+  script: z.string().optional(),
+});
+export type CampaignFormValues = z.infer<typeof CampaignSchema>;
+
 
 export interface DashboardAnalyticsData {
   sales: {

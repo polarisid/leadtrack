@@ -175,7 +175,7 @@ export function OfferFeed({ offers, isLoading, onOfferCreated, onOfferLiked, cur
                                     Compartilhar via WhatsApp
                                 </Button>
                                 <div className='flex gap-2'>
-                                    <Link href={`/oferta/${offer.id}`} passHref asChild>
+                                    <Link href={`/oferta/${offer.id}`} asChild>
                                       <Button variant='outline' className='w-full'>
                                           <ExternalLink className="mr-2 h-4 w-4" />
                                           Ver Página

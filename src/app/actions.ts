@@ -3,7 +3,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput, ProposalTextGeneratorInput, ProposalTextGeneratorOutput, BrandingSettings, InstallationService, Reminder, ReminderFormValues } from '@/lib/types';
+import { Client, ClientStatus, clientStatuses, productCategories, Comment, UserProfile, UserStatus, DashboardAnalyticsData, SellerAnalytics, AnalyticsPeriod, Group, RecentSale, MessageTemplate, SellerPerformanceData, Goal, UserGoal, Tag, LeadAnalysisInput, LeadAnalysisOutput, DailySummaryOutput, AdminDailySummaryOutput, Offer, OfferSchema, OfferFormValues, OfferStatus, OfferTextGeneratorInput, OfferTextGeneratorOutput, ProposalTextGeneratorInput, ProposalTextGeneratorOutput, BrandingSettings, InstallationService, Reminder, ReminderFormValues, ActivityLog, Campaign, CampaignLead, CampaignFormValues, CampaignLeadStatus } from '@/lib/types';
 import { z } from 'zod';
 import { db, auth } from '@/lib/firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, Timestamp, orderBy, writeBatch, getDoc, limit, collectionGroup, arrayRemove, runTransaction, arrayUnion, setDoc } from 'firebase/firestore';
@@ -25,6 +25,8 @@ const formSchema = z.object({
   status: z.enum(clientStatuses),
   remarketingReminder: z.string().optional(),
   tagIds: z.array(z.string()).optional(),
+  campaignId: z.string().optional(),
+  campaignLeadId: z.string().optional(),
 });
 
 const captureLeadSchema = z.object({
@@ -36,6 +38,58 @@ const captureLeadSchema = z.object({
 });
 
 const BRAZIL_TIMEZONE_OFFSET = 3;
+
+// ======== Activity Log Actions ========
+
+async function logActivity(actorId: string, actorName: string, action: string, details: Record<string, any> = {}) {
+  if (!db) return;
+  try {
+    await addDoc(collection(db, 'activity_logs'), {
+      actorId,
+      actorName,
+      action,
+      details,
+      createdAt: Timestamp.now(),
+    });
+  } catch (error) {
+    console.error("Error logging activity:", error);
+    // Fail silently so as not to interrupt the user's action
+  }
+}
+
+export async function getActivityLogs(adminId: string, period: "daily" | "weekly" | "monthly" = "daily", userId: string | null = null): Promise<ActivityLog[]> {
+    if (!db || !await isAdmin(adminId)) return [];
+
+    const logsRef = collection(db, 'activity_logs');
+    let q = query(logsRef, orderBy('createdAt', 'desc'), limit(100)); // Limit to last 100 for performance
+
+    const now = new Date();
+    let startDate: Date;
+    if (period === "daily") {
+        startDate = startOfDay(now);
+    } else if (period === "weekly") {
+        startDate = startOfWeek(now, { weekStartsOn: 1 });
+    } else { // monthly
+        startDate = startOfMonth(now);
+    }
+    
+    q = query(q, where('createdAt', '>=', Timestamp.fromDate(startDate)));
+
+    if (userId) {
+        q = query(q, where('actorId', '==', userId));
+    }
+    
+    const querySnapshot = await getDocs(q);
+
+    return querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+            id: doc.id,
+            ...data,
+            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+        } as ActivityLog;
+    });
+}
 
 
 export async function getClients(userId: string): Promise<Client[]> {
@@ -85,10 +139,12 @@ export async function addClient(data: unknown, userId: string) {
 
   const now = Timestamp.now();
   const userDoc = await getDoc(doc(db, 'users', userId));
-  const newOwnerName = userDoc.exists() ? userDoc.data().name : 'Vendedor';
-
+  const actorName = userDoc.exists() ? userDoc.data().name : 'Usuário Desconhecido';
+  
   try {
-    if (!querySnapshot.empty) {
+    // If the lead comes from a campaign, we don't check for transfers.
+    // The campaign lead takes precedence.
+    if (!querySnapshot.empty && !result.data.campaignId) {
       const existingClientDoc = querySnapshot.docs[0];
       const existingClientRef = doc(db, 'clients', existingClientDoc.id);
       const existingClientData = existingClientDoc.data();
@@ -113,7 +169,7 @@ export async function addClient(data: unknown, userId: string) {
         updatedAt: now,
       });
 
-      const commentText = `Lead transferido para ${newOwnerName}.`;
+      const commentText = `Lead transferido para ${actorName}.`;
       const commentsRef = collection(db, 'clients', existingClientDoc.id, 'comments');
       batch.set(doc(commentsRef), {
         text: commentText,
@@ -123,6 +179,12 @@ export async function addClient(data: unknown, userId: string) {
       });
 
       await batch.commit();
+      
+      await logActivity(userId, actorName, "Transferência de Lead", {
+        summary: `Lead "${existingClientData.name}" transferido para sua carteira.`,
+        clientId: existingClientDoc.id,
+        clientName: existingClientData.name,
+      });
 
       const updatedDocSnapshot = await getDoc(existingClientRef);
       const clientData = updatedDocSnapshot.data();
@@ -153,10 +215,10 @@ export async function addClient(data: unknown, userId: string) {
         updatedAt: now,
         reminders: [],
       };
-
+      
       batch.set(newClientRef, newClientData);
 
-      const commentText = `Lead criado por ${newOwnerName}.`;
+      const commentText = `Lead criado por ${actorName}.`;
       const commentsRef = collection(db, 'clients', newClientRef.id, 'comments');
       batch.set(doc(commentsRef), {
         text: commentText,
@@ -164,8 +226,27 @@ export async function addClient(data: unknown, userId: string) {
         createdAt: now,
         isSystemMessage: true,
       });
+      
+      if (result.data.campaignLeadId) {
+          const campaignLeadRef = doc(db, 'campaignLeads', result.data.campaignLeadId);
+          batch.update(campaignLeadRef, {
+              status: 'claimed',
+              claimedBy: userId,
+              claimedByName: actorName,
+              claimedAt: now,
+              finalClientId: newClientRef.id,
+              finalClientStatus: result.data.status,
+          });
+      }
+
 
       await batch.commit();
+
+      await logActivity(userId, actorName, "Criação de Cliente", {
+        summary: `Criou o cliente "${result.data.name}".`,
+        clientId: newClientRef.id,
+        clientName: result.data.name
+      });
 
       revalidatePath('/');
       return { 
@@ -215,6 +296,9 @@ export async function addBulkClients(clientsData: any[], userId: string) {
       return { success: false, errors: finalErrors, addedClients: [] };
   }
 
+  const userDoc = await getDoc(doc(db, 'users', userId));
+  const actorName = userDoc.exists() ? userDoc.data().name : 'Usuário Desconhecido';
+
   for (const [index, clientData] of clientsData.entries()) {
     const normalizedContact = (clientData.contact || "").replace(/\D/g, '');
     
@@ -256,6 +340,9 @@ export async function addBulkClients(clientsData: any[], userId: string) {
   try {
     if(addedClients.length > 0) {
       await batch.commit();
+      await logActivity(userId, actorName, "Importação em Massa", {
+        summary: `Importou ${addedClients.length} clientes via CSV.`
+      });
     }
     revalidatePath('/');
     return { success: true, errors: finalErrors, addedClients };
@@ -285,17 +372,35 @@ export async function updateClient(id: string, data: unknown, userId: string) {
     if (conflictingClient) {
         return { error: { formErrors: [], fieldErrors: { contact: ["Este número de contato já está em uso por outro cliente."] } } };
     }
+    
+    const batch = writeBatch(db);
+    const clientDocRef = doc(db, 'clients', id);
+    const now = Timestamp.now();
 
     try {
-        const clientDocRef = doc(db, 'clients', id);
-        const now = Timestamp.now();
-        await updateDoc(clientDocRef, {
+        
+        batch.update(clientDocRef, {
             ...result.data,
             tagIds: result.data.tagIds || [],
             normalizedContact,
             updatedAt: now,
         });
+
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        const actorName = userDoc.exists() ? userDoc.data().name : 'Usuário Desconhecido';
         
+        await logActivity(userId, actorName, "Atualização de Cliente", {
+            summary: `Atualizou os dados do cliente "${result.data.name}".`,
+            clientId: id,
+            clientName: result.data.name,
+        });
+        
+        if (result.data.campaignLeadId) {
+            const campaignLeadRef = doc(db, 'campaignLeads', result.data.campaignLeadId);
+            batch.update(campaignLeadRef, { finalClientStatus: result.data.status });
+        }
+        
+        await batch.commit();
         revalidatePath('/');
         
         const clientDoc = await getDoc(clientDocRef);
@@ -333,15 +438,16 @@ export async function updateClientStatus(id: string, status: ClientStatus, userI
         if (!clientDoc.exists()) {
             return { error: 'Cliente não encontrado.' };
         }
-        const previousStatus = clientDoc.data().status as ClientStatus;
+        const clientData = clientDoc.data();
+        const previousStatus = clientData.status as ClientStatus;
         const now = Timestamp.now();
         const batch = writeBatch(db);
+        
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        const userName = userDoc.exists() ? userDoc.data().name : 'Usuário';
 
         // Don't add a comment if status is the same
         if (status !== previousStatus) {
-            const userDoc = await getDoc(doc(db, 'users', userId));
-            const userName = userDoc.exists() ? userDoc.data().name : 'Usuário';
-
             const statusCommentText = `Status alterado de "${previousStatus}" para "${status}" por ${userName}.`;
             const commentsRef = collection(db, 'clients', id, 'comments');
             batch.set(doc(commentsRef), {
@@ -349,6 +455,14 @@ export async function updateClientStatus(id: string, status: ClientStatus, userI
                 userId: "system",
                 isSystemMessage: true,
                 createdAt: now,
+            });
+
+            await logActivity(userId, userName, "Mudança de Status", {
+                summary: `Alterou status de "${clientData.name}" de "${previousStatus}" para "${status}".`,
+                clientId: id,
+                clientName: clientData.name,
+                from: previousStatus,
+                to: status,
             });
         }
 
@@ -379,12 +493,30 @@ export async function updateClientStatus(id: string, status: ClientStatus, userI
                 isSystemMessage: true,
                 createdAt: now,
             });
+
+             await logActivity(userId, userName, "Venda Registrada", {
+                summary: `Registrou venda de ${saleValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} para "${clientData.name}".`,
+                clientId: id,
+                clientName: clientData.name,
+                value: saleValue,
+                productInfo,
+            });
         }
         
         batch.update(clientDocRef, { 
           status: status,
           updatedAt: now
         });
+        
+        if (clientData.campaignLeadId) {
+            const campaignLeadRef = doc(db, 'campaignLeads', clientData.campaignLeadId);
+            const updateData: any = { finalClientStatus: status };
+            if (status === 'Fechado') {
+                updateData.status = 'converted';
+            }
+            batch.update(campaignLeadRef, updateData);
+        }
+
 
         await batch.commit();
         
@@ -397,11 +529,11 @@ export async function updateClientStatus(id: string, status: ClientStatus, userI
 }
 
 
-export async function deleteClient(id: string, userId: string) {
+export async function deleteClient(id: string, userId: string, reason?: string) {
     if (!userId) {
         return { error: 'Usuário não autenticado' };
     }
-     if (!db) {
+    if (!db) {
         return { error: "Firebase não está configurado." };
     }
     try {
@@ -414,23 +546,26 @@ export async function deleteClient(id: string, userId: string) {
 
         const clientData = clientDoc.data();
         const batch = writeBatch(db);
+        
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        const actorName = userDoc.exists() ? userDoc.data().name : 'Usuário Desconhecido';
 
-        // Create an audit log for the deletion
-        const auditLogRef = doc(collection(db, 'audit_logs'));
-        batch.set(auditLogRef, {
-            action: 'client_deleted',
-            actorId: userId, // The user performing the action
-            entityOwnerId: clientData.userId, // The owner of the lead
-            entityId: id,
-            timestamp: Timestamp.now(),
-            details: {
-                clientName: clientData.name,
-                clientCity: clientData.city,
-                clientContact: clientData.contact
-            }
+        await logActivity(userId, actorName, "Exclusão de Cliente", {
+            summary: `Excluiu o cliente "${clientData.name}".`,
+            clientName: clientData.name,
+            clientCity: clientData.city,
+            clientContact: clientData.contact
         });
         
-        // Perform the actual deletion
+        if (clientData.campaignLeadId) {
+            const campaignLeadRef = doc(db, 'campaignLeads', clientData.campaignLeadId);
+            batch.update(campaignLeadRef, {
+                status: 'archived',
+                deletionReason: reason || `Lead recusado pelo vendedor ${actorName} após exclusão do cliente.`,
+            });
+        }
+        
+        // Perform the actual deletion of the client
         batch.delete(clientDocRef);
         
         await batch.commit();
@@ -513,6 +648,15 @@ export async function addComment(clientId: string, text: string, userId: string)
 
     const userDoc = await getDoc(doc(db, 'users', userId));
     const userName = userDoc.exists() ? userDoc.data().name : 'Usuário';
+
+    const clientDoc = await getDoc(clientDocRef);
+    const clientName = clientDoc.exists() ? clientDoc.data().name : 'Cliente Desconhecido';
+
+     await logActivity(userId, userName, "Observação Adicionada", {
+        summary: `Adicionou uma observação ao cliente "${clientName}".`,
+        clientId,
+        clientName,
+    });
 
     return { 
         success: true, 
@@ -875,7 +1019,7 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
     getDocs(usersQuery),
     getDocs(collection(db, 'clients')),
     getDocs(query(collection(db, 'sales'), orderBy('saleDate', 'asc'))),
-    getDocs(query(collection(db, 'audit_logs'), where('action', '==', 'client_deleted')))
+    getDocs(query(collection(db, 'activity_logs'), where('action', '==', 'Exclusão de Cliente')))
   ]);
 
   const sellers = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as Omit<UserProfile, 'id'> }));
@@ -912,7 +1056,7 @@ export async function getSellerAnalytics(adminId: string, period: AnalyticsPerio
   const deletedLeadsCountMap = new Map<string, number>();
   auditLogsSnapshot.forEach(logDoc => {
       const logData = logDoc.data();
-      const ownerId = logData.entityOwnerId;
+      const ownerId = logData.actorId;
       if (ownerId) {
           deletedLeadsCountMap.set(ownerId, (deletedLeadsCountMap.get(ownerId) || 0) + 1);
       }
@@ -1405,7 +1549,7 @@ export async function updateGroup(groupId: string, name: string, adminId: string
 }
 
 export async function deleteGroup(groupId: string, adminId: string) {
-  if (!db) return { success: false, error: "Firebase não está configurado." };
+  if (!db) return { success: false, error: "Firebase não configurado." };
   if (!await isAdmin(adminId)) {
     return { success: false, error: 'Acesso negado.' };
   }
@@ -1470,9 +1614,17 @@ export async function cancelSale(saleId: string, userId: string) {
   }
 
   const clientId = saleDoc.data().clientId;
+  const clientDocRef = doc(db, 'clients', clientId);
 
   try {
-    const clientDocRef = doc(db, 'clients', clientId);
+    const [userDoc, clientDoc] = await Promise.all([
+      getDoc(doc(db, 'users', userId)),
+      getDoc(clientDocRef),
+    ]);
+    
+    const actorName = userDoc.exists() ? userDoc.data().name : 'Usuário Desconhecido';
+    const clientName = clientDoc.exists() ? clientDoc.data().name : 'Cliente Desconhecido';
+
     const batch = writeBatch(db);
     
     batch.delete(saleDocRef);
@@ -1483,6 +1635,13 @@ export async function cancelSale(saleId: string, userId: string) {
     });
 
     await batch.commit();
+
+    await logActivity(userId, actorName, "Venda Cancelada", {
+        summary: `Cancelou a venda para "${clientName}".`,
+        clientId: clientId,
+        clientName: clientName,
+        saleId: saleId,
+    });
 
     revalidatePath('/');
     revalidatePath('/admin/dashboard');
@@ -1908,6 +2067,12 @@ export async function captureLead(data: unknown, groupId: string) {
     });
     
     await batch.commit();
+    
+    await logActivity("system", "Página de Captura", "Lead Capturado", {
+      summary: `Novo lead "${name}" capturado pelo grupo "${groupName}".`,
+      clientName: name
+    });
+
     revalidatePath('/');
     return { success: true };
 
@@ -1955,7 +2120,8 @@ export async function claimLead(clientId: string, userId: string, userName: stri
     if (!clientDoc.exists() || clientDoc.data()?.userId !== null) {
       return { success: false, error: 'Este lead já foi pego ou não existe mais.' };
     }
-
+    
+    const clientData = clientDoc.data();
     const batch = writeBatch(db);
     const now = Timestamp.now();
 
@@ -1974,6 +2140,12 @@ export async function claimLead(clientId: string, userId: string, userName: stri
     });
     
     await batch.commit();
+
+    await logActivity(userId, userName, "Lead Reivindicado", {
+        summary: `Pegou o lead "${clientData.name}".`,
+        clientId: clientId,
+        clientName: clientData.name,
+    });
 
     const updatedDoc = await getDoc(clientDocRef);
     const updatedClientData = updatedDoc.data();
@@ -2018,7 +2190,7 @@ export async function getTags(userId: string): Promise<Tag[]> {
 }
 
 export async function createTag(data: unknown, adminId: string) {
-  if (!db) return { success: false, error: "Firebase não configurado." };
+  if (!db) return { success: false, error: "Firebase não está configurado." };
   if (!await isAdmin(adminId)) {
     return { success: false, error: 'Acesso negado.' };
   }
@@ -2408,6 +2580,12 @@ export async function createOffer(data: OfferFormValues, userId: string, userNam
     
     const docRef = await addDoc(collection(db, 'offers'), newOfferData);
     
+    await logActivity(userId, userName, "Criação de Oferta", {
+      summary: `Criou a oferta "${data.title}"`,
+      offerId: docRef.id,
+      offerTitle: data.title,
+    });
+
     revalidatePath('/');
     revalidatePath('/admin/dashboard');
     revalidatePath('/oferta/[id]', 'page');
@@ -2523,7 +2701,26 @@ export async function updateOfferStatus(offerId: string, status: OfferStatus, ad
   if (!db || !await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
 
   try {
-    await updateDoc(doc(db, 'offers', offerId), { status });
+    const offerDocRef = doc(db, 'offers', offerId);
+    const [userDoc, offerDoc] = await Promise.all([
+        getDoc(doc(db, 'users', adminId)),
+        getDoc(offerDocRef),
+    ]);
+    
+    if (!offerDoc.exists()) return { success: false, error: 'Oferta não encontrada.' };
+
+    const actorName = userDoc.exists() ? userDoc.data().name : 'Admin';
+    const offerData = offerDoc.data();
+
+    await updateDoc(offerDocRef, { status });
+
+    await logActivity(adminId, actorName, "Status da Oferta Alterado", {
+        summary: `Alterou o status da oferta "${offerData.title}" para "${status}".`,
+        offerId,
+        offerTitle: offerData.title,
+        newStatus: status
+    });
+
     revalidatePath('/');
     revalidatePath('/admin/dashboard');
     revalidatePath('/oferta/[id]', 'page');
@@ -2691,6 +2888,320 @@ export async function deleteInstallationService(serviceId: string, adminId: stri
     }
 }
 
-    
+// ======== Campaign Actions ========
 
+export async function createCampaign(data: CampaignFormValues, adminId: string) {
+    if (!db) return { success: false, error: 'Firebase não está configurado.' };
+    if (!await isAdmin(adminId)) {
+        return { success: false, error: 'Acesso negado.' };
+    }
+
+    try {
+        const now = Timestamp.now();
+        const docRef = await addDoc(collection(db, 'campaigns'), {
+            ...data,
+            adminId,
+            isActive: true,
+            createdAt: now,
+            leadCount: 0,
+        });
+
+        await logActivity(adminId, 'Admin', 'Criação de Campanha', {
+            summary: `Criou a campanha "${data.name}"`,
+            campaignId: docRef.id,
+            campaignName: data.name,
+        });
+
+        revalidatePath('/admin/dashboard');
+        return { success: true, campaignId: docRef.id };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao criar campanha.' };
+    }
+}
+
+export async function updateCampaign(campaignId: string, data: CampaignFormValues, adminId: string) {
+    if (!db) return { success: false, error: 'Firebase não está configurado.' };
+    if (!await isAdmin(adminId)) {
+        return { success: false, error: 'Acesso negado.' };
+    }
+
+    try {
+        const campaignRef = doc(db, 'campaigns', campaignId);
+        await updateDoc(campaignRef, data);
+
+        await logActivity(adminId, 'Admin', 'Atualização de Campanha', {
+            summary: `Atualizou a campanha "${data.name}"`,
+            campaignId: campaignId,
+            campaignName: data.name,
+        });
+
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao atualizar campanha.' };
+    }
+}
+
+const findValue = (obj: Record<string, string>, keys: string[]): string | undefined => {
+    for (const key of keys) {
+        const normalizedKey = key.toLowerCase().trim();
+        if (obj[normalizedKey] !== undefined) {
+            return obj[normalizedKey];
+        }
+    }
+    return undefined;
+};
+
+export async function uploadCampaignLeads(campaignId: string, leads: Record<string, string>[], adminId: string) {
+    if (!db) return { success: false, errors: ['Firebase não está configurado.'] };
+    if (!await isAdmin(adminId)) {
+        return { success: false, errors: ['Acesso negado.'] };
+    }
+
+    const batch = writeBatch(db);
+    const leadsRef = collection(db, 'campaignLeads');
+    let successfulUploads = 0;
+
+    const campaignRef = doc(db, 'campaigns', campaignId);
+    const campaignDoc = await getDoc(campaignRef);
+    if (!campaignDoc.exists()) {
+        return { success: false, errors: ["Campanha não encontrada."] };
+    }
+    const campaignData = campaignDoc.data();
+
+    // Create a normalized mapping from CSV headers to our data model
+    const normalizedLeads = leads.map(row => {
+        const normalizedRow: Record<string, string> = {};
+        for (const key in row) {
+            normalizedRow[key.toLowerCase().trim()] = row[key];
+        }
+        return normalizedRow;
+    });
+
+    for (const leadData of normalizedLeads) {
+        const newLeadRef = doc(leadsRef);
+        
+        // Flexible key matching for common variations
+        const name = findValue(leadData, ['nome cliente', 'name', 'nome']);
+        const city = findValue(leadData, ['cidade', 'city']);
+        const contact = findValue(leadData, ['contato', 'contact', 'telefone']);
+        
+        batch.set(newLeadRef, {
+            campaignId,
+            groupId: campaignData.groupId,
+            originalData: leadData,
+            name: name || 'Sem Nome',
+            city: city || null,
+            contact: contact || null,
+            status: 'available' as CampaignLeadStatus,
+            createdAt: Timestamp.now(),
+        });
+        successfulUploads++;
+    }
+
+    try {
+        if (successfulUploads > 0) {
+            batch.update(campaignRef, { leadCount: (campaignData.leadCount || 0) + successfulUploads });
+            await batch.commit();
+            await logActivity(adminId, 'Admin', 'Upload de Leads de Campanha', {
+                summary: `Fez upload de ${successfulUploads} leads para a campanha "${campaignData.name}"`,
+                campaignId,
+            });
+        }
+        revalidatePath('/admin/dashboard');
+        return { success: true, count: successfulUploads };
+    } catch (e: any) {
+        return { success: false, errors: [e.message || 'Erro ao salvar leads no banco de dados.'] };
+    }
+}
+
+export async function getCampaignsForUserGroup(groupId: string): Promise<Campaign[]> {
+    if (!db || !groupId) return [];
     
+    const campaignsRef = collection(db, 'campaigns');
+    const q = query(campaignsRef, where('groupId', '==', groupId), where('isActive', '==', true));
+    const querySnapshot = await getDocs(q);
+
+    return querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+            id: doc.id,
+            ...data,
+            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+        } as Campaign;
+    });
+}
+
+
+export async function getCampaigns(adminId: string): Promise<Campaign[]> {
+    if (!db) throw new Error("Firebase não está configurado.");
+    if (!await isAdmin(adminId)) throw new Error("Acesso negado.");
+
+    const campaignsRef = collection(db, 'campaigns');
+    const leadsRef = collection(db, 'campaignLeads');
+    
+    const q = query(campaignsRef, where('adminId', '==', adminId), orderBy('createdAt', 'desc'));
+    
+    const [campaignsSnapshot, groupsSnapshot, allLeadsSnapshot] = await Promise.all([
+        getDocs(q),
+        getDocs(collection(db, 'groups')),
+        getDocs(leadsRef) // Fetch all leads once
+    ]);
+
+    const groupMap = new Map(groupsSnapshot.docs.map(doc => [doc.id, doc.data().name]));
+
+    // Pre-calculate counts for each campaign
+    const leadCounts = allLeadsSnapshot.docs.reduce((acc, doc) => {
+        const lead = doc.data() as CampaignLead;
+        if (!acc[lead.campaignId]) {
+            acc[lead.campaignId] = { claimed: 0, converted: 0, archived: 0 };
+        }
+        if (lead.status === 'claimed') acc[lead.campaignId].claimed++;
+        if (lead.status === 'converted') acc[lead.campaignId].converted++;
+        if (lead.status === 'archived') acc[lead.campaignId].archived++;
+        return acc;
+    }, {} as Record<string, { claimed: number, converted: number, archived: number }>);
+
+
+    return campaignsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        const counts = leadCounts[doc.id] || { claimed: 0, converted: 0, archived: 0 };
+        return {
+            id: doc.id,
+            ...data,
+            groupName: groupMap.get(data.groupId) || 'Grupo Deletado',
+            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+            claimedCount: counts.claimed,
+            convertedCount: counts.converted,
+            archivedCount: counts.archived
+        } as Campaign;
+    });
+}
+
+export async function deleteCampaign(campaignId: string, adminId: string) {
+    if (!db) return { success: false, error: 'Firebase não está configurado.' };
+    if (!await isAdmin(adminId)) return { success: false, error: 'Acesso negado.' };
+
+    try {
+        const batch = writeBatch(db);
+
+        // Delete the campaign document
+        const campaignRef = doc(db, 'campaigns', campaignId);
+        batch.delete(campaignRef);
+
+        // Delete all associated leads
+        const leadsQuery = query(collection(db, 'campaignLeads'), where('campaignId', '==', campaignId));
+        const leadsSnapshot = await getDocs(leadsQuery);
+        leadsSnapshot.forEach(doc => batch.delete(doc.ref));
+
+        await batch.commit();
+
+        await logActivity(adminId, 'Admin', 'Exclusão de Campanha', {
+            summary: `Excluiu a campanha com ID ${campaignId}`,
+            campaignId: campaignId,
+        });
+
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao deletar campanha.' };
+    }
+}
+
+
+export async function getCampaignDetails(campaignId: string, adminId: string): Promise<{ campaign: Campaign; leads: CampaignLead[] } | null> {
+    if (!db) throw new Error("Firebase não está configurado.");
+    if (!await isAdmin(adminId)) throw new Error("Acesso negado.");
+
+    const campaignRef = doc(db, 'campaigns', campaignId);
+    const campaignDoc = await getDoc(campaignRef);
+
+    if (!campaignDoc.exists()) return null;
+    const campaignData = campaignDoc.data();
+
+    const leadsRef = collection(db, 'campaignLeads');
+    const q = query(leadsRef, where('campaignId', '==', campaignId));
+    const allLeadsSnapshot = await getDocs(q);
+    
+    const leads = allLeadsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+            id: doc.id,
+            ...data,
+            claimedAt: data.claimedAt ? (data.claimedAt as Timestamp).toDate().toISOString() : null,
+            createdAt: data.createdAt.toDate().toISOString(),
+        } as CampaignLead;
+    });
+
+    const claimedCount = leads.filter(l => l.status === 'claimed').length;
+    const convertedCount = leads.filter(l => l.status === 'converted').length;
+    const archivedCount = leads.filter(l => l.status === 'archived').length;
+
+    const campaign: Campaign = {
+        id: campaignDoc.id,
+        ...campaignData,
+        createdAt: (campaignData.createdAt as Timestamp).toDate().toISOString(),
+        leadCount: campaignData.leadCount || leads.length,
+        claimedCount,
+        convertedCount,
+        archivedCount,
+    } as Campaign;
+
+    return {
+        campaign,
+        leads
+    };
+}
+    
+export async function getAvailableCampaignLeads(campaignId: string): Promise<CampaignLead[]> {
+    if (!db) return [];
+    
+    const leadsRef = collection(db, 'campaignLeads');
+    const q = query(
+        leadsRef, 
+        where('campaignId', '==', campaignId),
+        where('status', '==', 'available')
+    );
+    
+    const querySnapshot = await getDocs(q);
+    
+    return querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+            id: doc.id,
+            ...data,
+            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+        } as CampaignLead;
+    });
+}
+
+export async function archiveCampaignLead(campaignLeadId: string, reason: string, adminId: string) {
+    if (!db) return { success: false, error: 'Firebase não está configurado.' };
+    if (!await isAdmin(adminId)) {
+        return { success: false, error: 'Acesso negado.' };
+    }
+    if (!reason.trim()) {
+        return { success: false, error: 'O motivo da recusa é obrigatório.' };
+    }
+
+    try {
+        const leadRef = doc(db, 'campaignLeads', campaignLeadId);
+        await updateDoc(leadRef, {
+            status: 'archived',
+            deletionReason: reason,
+        });
+
+        const leadDoc = await getDoc(leadRef);
+        const adminDoc = await getDoc(doc(db, 'users', adminId));
+        await logActivity(adminId, adminDoc.data()?.name || 'Admin', 'Lead de Campanha Recusado', {
+            summary: `Recusou o lead de campanha "${leadDoc.data()?.name}"`,
+            campaignLeadId,
+            reason
+        });
+
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Erro ao arquivar o lead.' };
+    }
+}
