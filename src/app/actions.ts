@@ -1446,7 +1446,7 @@ export async function getGroups(adminId: string): Promise<Group[]> {
   if (!await isAdmin(adminId)) throw new Error('Acesso negado.');
 
   const [groupsSnapshot, usersSnapshot] = await Promise.all([
-    getDocs(query(collection(db, 'groups'), where('adminId', '==', adminId), orderBy('name'))),
+    getDocs(query(collection(db, 'groups'), orderBy('name'))),
     getDocs(collection(db, 'users'))
   ]);
 
@@ -3040,7 +3040,7 @@ export async function getCampaigns(adminId: string): Promise<Campaign[]> {
     const campaignsRef = collection(db, 'campaigns');
     const leadsRef = collection(db, 'campaignLeads');
     
-    const q = query(campaignsRef, where('adminId', '==', adminId), orderBy('createdAt', 'desc'));
+    const q = query(campaignsRef, orderBy('createdAt', 'desc'));
     
     const [campaignsSnapshot, groupsSnapshot, allLeadsSnapshot] = await Promise.all([
         getDocs(q),

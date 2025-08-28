@@ -105,60 +105,20 @@ import { ClientDeleteDialog } from './client-delete-dialog';
 
 
 interface CampaignLeadsTableProps {
+    leads: CampaignLead[];
+    isLoading: boolean;
     campaign: Campaign;
-    onLeadClaimed: () => void;
+    onLeadClaimed: (lead: CampaignLead) => void;
 }
 
-function CampaignLeadsTable({ campaign, onLeadClaimed }: CampaignLeadsTableProps) {
-    const [leads, setLeads] = useState<CampaignLead[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isClaiming, startClaiming] = useTransition();
-    const { toast } = useToast();
-    const { user, userProfile } = useAuth();
-    
-    const fetchLeads = useCallback(() => {
-        setIsLoading(true);
-        getAvailableCampaignLeads(campaign.id)
-            .then(setLeads)
-            .catch(() => toast({ variant: "destructive", title: "Erro", description: "Não foi possível buscar os leads da campanha." }))
-            .finally(() => setIsLoading(false));
-    }, [campaign.id, toast]);
-
-    useEffect(() => {
-        fetchLeads();
-    }, [fetchLeads]);
+function CampaignLeadsTable({ leads, isLoading, campaign, onLeadClaimed }: CampaignLeadsTableProps) {
+    const [claimingId, setClaimingId] = useState<string | null>(null);
 
     const handleClaimLead = (lead: CampaignLead) => {
-        if (!user || !userProfile) return;
-        
-        startClaiming(async () => {
-             const remarketingText = Object.entries(lead.originalData)
-                .filter(([key]) => !['nome cliente', 'name', 'nome', 'cidade', 'city', 'contato', 'contact', 'telefone'].includes(key.toLowerCase().trim()))
-                .map(([key, value]) => `${key}: ${value}`)
-                .join('\n');
-
-            const result = await addClient({
-                name: lead.name,
-                city: lead.city || 'Não informado',
-                contact: lead.contact || 'Não informado',
-                desiredProduct: "Outros",
-                status: "Novo Lead",
-                remarketingReminder: remarketingText,
-                tagIds: campaign.defaultTagId ? [campaign.defaultTagId] : [],
-                campaignId: campaign.id,
-                campaignLeadId: lead.id,
-            }, user.uid);
-
-            if (result.success) {
-                toast({ title: "Lead pego com sucesso!" });
-                onLeadClaimed(); // This should trigger a refresh in the parent
-                fetchLeads(); // Re-fetch leads for this specific campaign table
-            } else {
-                toast({ variant: "destructive", title: "Erro ao pegar lead", description: result.error?.formErrors?.join(', ') || result.error?.fieldErrors?.contact?.[0] || 'Ocorreu um erro.' });
-            }
-        });
+        setClaimingId(lead.id);
+        onLeadClaimed(lead);
     }
-
+    
     if (isLoading) {
         return (
             <div className="space-y-2">
@@ -186,8 +146,8 @@ function CampaignLeadsTable({ campaign, onLeadClaimed }: CampaignLeadsTableProps
                         <TableRow key={lead.id}>
                             <TableCell className="font-medium">{lead.name}</TableCell>
                             <TableCell className="text-right">
-                                <Button size="sm" variant="secondary" onClick={() => handleClaimLead(lead)} disabled={isClaiming}>
-                                    {isClaiming ? <Loader2 className="h-4 w-4 animate-spin" /> : "Pegar Lead"}
+                                <Button size="sm" variant="secondary" onClick={() => handleClaimLead(lead)} disabled={claimingId === lead.id}>
+                                    {claimingId === lead.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Pegar Lead"}
                                 </Button>
                             </TableCell>
                         </TableRow>
@@ -233,6 +193,8 @@ export function ClientsView() {
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(true);
+  const [availableCampaignLeads, setAvailableCampaignLeads] = useState<Record<string, CampaignLead[]>>({});
+  const [isLoadingCampaignLeads, setIsLoadingCampaignLeads] = useState(false);
 
 
   const [isPending, startTransition] = useTransition();
@@ -287,13 +249,29 @@ export function ClientsView() {
     }
   }, [userProfile?.groupId, toast]);
 
-  const fetchCampaigns = useCallback(() => {
+  const fetchCampaignsAndLeads = useCallback(async () => {
     if (userProfile?.groupId) {
         setIsLoadingCampaigns(true);
-        getCampaignsForUserGroup(userProfile.groupId)
-            .then(setCampaigns)
-            .catch(() => toast({ variant: "destructive", title: "Erro", description: "Não foi possível buscar as campanhas." }))
-            .finally(() => setIsLoadingCampaigns(false));
+        setIsLoadingCampaignLeads(true);
+        try {
+            const userCampaigns = await getCampaignsForUserGroup(userProfile.groupId);
+            setCampaigns(userCampaigns);
+
+            const leadsPromises = userCampaigns.map(campaign => getAvailableCampaignLeads(campaign.id));
+            const leadsResults = await Promise.all(leadsPromises);
+            
+            const leadsMap: Record<string, CampaignLead[]> = {};
+            userCampaigns.forEach((campaign, index) => {
+                leadsMap[campaign.id] = leadsResults[index];
+            });
+            setAvailableCampaignLeads(leadsMap);
+
+        } catch (error) {
+            toast({ variant: "destructive", title: "Erro", description: "Não foi possível buscar as campanhas e seus leads." });
+        } finally {
+            setIsLoadingCampaigns(false);
+            setIsLoadingCampaignLeads(false);
+        }
     }
   }, [userProfile?.groupId, toast]);
 
@@ -303,11 +281,11 @@ export function ClientsView() {
 
   useEffect(() => {
     fetchGroupLeads();
-    fetchCampaigns();
-  }, [fetchGroupLeads, fetchCampaigns]);
+    fetchCampaignsAndLeads();
+  }, [fetchGroupLeads, fetchCampaignsAndLeads]);
 
   useEffect(() => {
-    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
+    const audio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU3LjgyLjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/84Qpg36AAAAAABPTUMAAADDZODL+AAAQAAAATE5MDI4MgAAAP/zhCoE/1AAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV');
     audio.preload = 'auto';
     audioRef.current = audio;
   }, []);
@@ -336,183 +314,104 @@ export function ClientsView() {
     });
   }, [clients, searchTerm, statusFilter, productFilter, sortOrder]);
 
-  const selectedClient = useMemo(() => {
-    return clients.find(c => c.id === selectedClientId) || null;
-  }, [clients, selectedClientId]);
-  
-  const handleAddClient = useCallback(() => {
-    setEditingClient(null);
-    setIsFormOpen(true);
-  }, []);
+  const fifteenDaysAgo = subDays(new Date(), 15);
 
-  const handleEditClient = useCallback((client: Client) => {
+  const handleEditClient = (client: Client) => {
     setEditingClient(client);
     setIsFormOpen(true);
-  }, []);
+  };
+
+  const handleAddClient = () => {
+    setEditingClient(null);
+    setIsFormOpen(true);
+  };
   
-  const handleViewDetails = useCallback((clientId: string) => {
-    setSelectedClientId(clientId);
-    setIsDetailSheetOpen(true);
-  }, []);
-
-  const handleDetailSheetOpenChange = useCallback((isOpen: boolean) => {
-    setIsDetailSheetOpen(isOpen);
-    if (!isOpen) {
-      setSelectedClientId(null);
-    }
-  }, []);
-
-  const handleOpenProposalDialog = useCallback((client: Client) => {
-    setClientForProposal(client);
-  }, []);
-
-
-  const handleStatusChange = (client: Client, newStatus: ClientStatus) => {
-    if (!user) return;
-
-    if (newStatus === 'Fechado') {
-        setSaleValueClient(client);
-    } else {
-        startTransition(async () => {
-            const originalClients = [...clients];
-            setClients(prev => prev.map(c => c.id === client.id ? {...c, status: newStatus, updatedAt: new Date().toISOString()} : c));
-
-            const result = await updateClientStatus(client.id, newStatus, user.uid);
-            if (result.success) {
-                toast({ title: 'Status atualizado com sucesso!' });
-            } else {
-                setClients(originalClients);
-                toast({ variant: 'destructive', title: 'Erro ao atualizar status.', description: result.error || "Verifique suas permissões no Firestore." });
-            }
-        });
+  const handleClientAdded = (newClient: Client) => {
+    setClients(prev => [newClient, ...prev]);
+    if (newClient.campaignLeadId) {
+      setAvailableCampaignLeads(prev => {
+        const campaignId = newClient.campaignId!;
+        const updatedLeads = (prev[campaignId] || []).filter(lead => lead.id !== newClient.campaignLeadId);
+        return { ...prev, [campaignId]: updatedLeads };
+      });
     }
   };
 
-  const handleToggleReminder = (clientId: string, reminderId: string, isCompleted: boolean) => {
-      if(!user) return;
-      startTransition(async () => {
-          const result = await updateReminderStatus(clientId, reminderId, isCompleted, user.uid);
-          if (result.success && result.client) {
-              toast({ title: "Lembrete atualizado!" });
-              handleClientUpdated(result.client);
-              const updatedReminders = await getReminders(user.uid);
-              setReminders(updatedReminders);
-          } else {
-              toast({ variant: "destructive", title: "Erro", description: result.error });
-          }
-      });
-  }
+  const handleClientUpdated = (updatedClient: Client) => {
+    setClients(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
+  };
+  
+  const handleClientsImported = (importedClients: Client[]) => {
+      setClients(prev => [...importedClients, ...prev]);
+  };
 
-  const handleTagChange = (client: Client, tagId: string, isChecked: boolean) => {
-    if (!user) return;
+  const handleDeleteConfirmed = (clientToDelete: Client, reason?: string) => {
+    if (!clientToDelete || !user) return;
 
     startTransition(async () => {
-      const currentTags = client.tagIds || [];
-      const newTagIds = isChecked
-        ? [...currentTags, tagId]
-        : currentTags.filter((id) => id !== tagId);
-
-      const originalClients = [...clients];
-      setClients(prev => prev.map(c => c.id === client.id ? {...c, tagIds: newTagIds} : c));
-
-      const result = await updateClientTags(client.id, newTagIds, user.uid);
+      const result = await deleteClient(clientToDelete.id, user.uid, reason);
       if (result.success) {
-        toast({ title: "Tags atualizadas!" });
+        toast({
+          title: "Cliente deletado!",
+          description: `${clientToDelete.name} foi removido com sucesso.`,
+        });
+        setClients(prev => prev.filter(c => c.id !== clientToDelete.id));
+        setClientToDelete(null);
       } else {
-        setClients(originalClients);
-        toast({ variant: "destructive", title: "Erro ao atualizar tags", description: result.error });
+        toast({
+          variant: "destructive",
+          title: "Erro ao deletar",
+          description: result.error,
+        });
       }
     });
   };
-  
-  const handleClaimLead = (clientId: string) => {
-    if (!user || !userProfile) return;
-    startClaimingTransition(async () => {
-        const result = await claimLead(clientId, user.uid, userProfile.name);
-        if (result.success && result.client) {
-            toast({ title: "Lead pego com sucesso!" });
-            setUnclaimedLeads(prev => prev.filter(lead => lead.id !== clientId));
-            setClients(prev => [result.client!, ...prev]);
-        } else {
-            toast({ variant: "destructive", title: "Erro ao pegar lead", description: result.error });
-            fetchGroupLeads(); // Refetch to get the latest state
-        }
-    });
+
+  const handleStatusChange = (client: Client, newStatus: ClientStatus) => {
+      if (newStatus === 'Fechado') {
+          setSaleValueClient(client);
+      } else {
+          startTransition(async () => {
+              if (!user) return;
+              const result = await updateClientStatus(client.id, newStatus, user.uid);
+              if(result.success) {
+                  toast({ title: 'Status atualizado!', description: `O status de ${client.name} foi alterado para ${newStatus}.`});
+                  setClients(prev => prev.map(c => c.id === client.id ? {...c, status: newStatus, updatedAt: new Date().toISOString()} : c));
+              } else {
+                  toast({ variant: 'destructive', title: 'Erro', description: result.error });
+              }
+          });
+      }
   };
-
-  const handleConfirmSale = (saleValue: number, productInfo: string) => {
+  
+  const handleConfirmSale = (value: number, productInfo: string) => {
     if (!saleValueClient || !user) return;
-
     startTransition(async () => {
-        const originalClients = [...clients];
-        const clientId = saleValueClient.id;
-
-        setClients(prev => prev.map(c => c.id === clientId ? {...c, status: 'Fechado'} : c));
-        setSaleValueClient(null);
-
-        const result = await updateClientStatus(clientId, 'Fechado', user.uid, saleValue, productInfo);
-
-        if (result.success) {
-            toast({ title: 'Venda registrada com sucesso!' });
+        const result = await updateClientStatus(saleValueClient.id, 'Fechado', user.uid, value, productInfo);
+        if(result.success) {
+            toast({ title: 'Venda registrada!', description: `Venda para ${saleValueClient.name} registrada com sucesso.`});
+            setClients(prev => prev.map(c => c.id === saleValueClient.id ? {...c, status: 'Fechado', updatedAt: new Date().toISOString()} : c));
+            setSaleValueClient(null);
+            // Play sound effect
             if (audioRef.current) {
                 audioRef.current.play().catch(e => console.error("Error playing audio:", e));
             }
-            fetchAllData();
         } else {
-            setClients(originalClients);
-            toast({ variant: 'destructive', title: 'Erro ao registrar venda.', description: result.error });
+            toast({ variant: 'destructive', title: 'Erro ao registrar venda', description: result.error });
         }
     });
-  };
+  }
 
-  const handleDeleteConfirmed = useCallback((client: Client, reason?: string) => {
-    if (!user) return;
-    startTransition(async () => {
-        const originalClients = [...clients];
-        setClients(prevClients => prevClients.filter(c => c.id !== client.id));
-
-        const result = await deleteClient(client.id, user.uid, reason);
-        if(result.success) {
-            toast({ title: 'Cliente deletado com sucesso!' });
-            setClientToDelete(null);
-        } else {
-            setClients(originalClients);
-            toast({ variant: 'destructive', title: 'Erro ao deletar cliente.', description: result.error || "Verifique suas permissões no Firestore." });
-        }
-    })
-  }, [user, clients, toast]);
-  
-  const handleClientAdded = useCallback((newClient: Client) => {
-    setClients(prevClients => [newClient, ...prevClients]);
-    if(user) {
-        getReminders(user.uid).then(setReminders);
-    }
-  }, [user]);
-
-  const handleClientUpdated = useCallback((updatedClient: Client) => {
-      setClients(prevClients => 
-          prevClients.map(c => c.id === updatedClient.id ? {...c, ...updatedClient} : c)
-      );
-      if(user) {
-        getReminders(user.uid).then(setReminders);
-      }
-  }, [user]);
-
-  const handleClientsImported = useCallback((newClients: Client[]) => {
-    setClients(prevClients => [...newClients, ...prevClients]);
-  }, []);
-
-  const handleExport = useCallback(() => {
-    if (filteredClients.length === 0) {
+  const handleExport = () => {
+    if (clients.length === 0) {
       toast({
         variant: "destructive",
         title: "Nenhum cliente para exportar",
-        description: "A exportação reflete os filtros aplicados na tela.",
       });
       return;
     }
 
-    const dataToExport = filteredClients.map(client => ({
+    const dataToExport = clients.map(client => ({
       "Nome do Cliente": client.name,
       "Cidade": client.city,
       "Contato": client.contact,
@@ -528,43 +427,141 @@ export function ClientsView() {
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    link.setAttribute("download", "clientes_exportados.csv");
+    link.setAttribute("download", "meus_clientes.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
-    toast({ title: "Exportação iniciada!", description: "Seu arquivo será baixado em breve." });
-  }, [filteredClients, toast]);
+    toast({ title: "Exportação iniciada!", description: "Seu arquivo CSV será baixado." });
+  };
+  
+  const handleLogout = async () => {
+      await signOut(auth);
+      // router is available because this is a client component
+  }
+
+  const handleViewDetails = (clientId: string) => {
+    setSelectedClientId(clientId);
+    setIsDetailSheetOpen(true);
+  }
+  
+  const handleDetailSheetOpenChange = (open: boolean) => {
+      if (!open) {
+          setSelectedClientId(null);
+      }
+      setIsDetailSheetOpen(open);
+  }
+  
+  const selectedClient = useMemo(() => clients.find(c => c.id === selectedClientId), [clients, selectedClientId]);
 
   const handleCancelSale = () => {
     if (!saleToCancel || !user) return;
     startTransition(async () => {
-      const result = await cancelSale(saleToCancel.id, user.uid);
-      if (result.success && result.updatedClient) {
-        toast({ title: 'Venda cancelada com sucesso!' });
-        setRecentSales(prev => prev.filter(s => s.id !== saleToCancel.id));
-        handleClientUpdated(result.updatedClient);
-      } else {
-        toast({ variant: 'destructive', title: 'Erro ao cancelar venda.', description: result.error });
-      }
-      setSaleToCancel(null);
+        const result = await cancelSale(saleToCancel.id, user.uid);
+        if (result.success && result.updatedClient) {
+            toast({ title: 'Venda Cancelada', description: `A venda para ${saleToCancel.clientName} foi cancelada.` });
+            setRecentSales(prev => prev.filter(s => s.id !== saleToCancel.id));
+            handleClientUpdated(result.updatedClient);
+            setSaleToCancel(null);
+        } else {
+            toast({ variant: 'destructive', title: 'Erro', description: result.error });
+        }
     });
-  };
-
-  const handleLogout = async () => {
-    await signOut(auth);
-  };
+  }
+  
+  const handleTagChange = (client: Client, tagId: string, isChecked: boolean) => {
+      if (!user) return;
+      startTransition(async () => {
+          const currentTags = client.tagIds || [];
+          const newTags = isChecked ? [...currentTags, tagId] : currentTags.filter(id => id !== tagId);
+          const result = await updateClientTags(client.id, newTags, user.uid);
+          if (result.success) {
+              setClients(prev => prev.map(c => c.id === client.id ? { ...c, tagIds: newTags, updatedAt: new Date().toISOString() } : c));
+              toast({ title: "Tags atualizadas!" });
+          } else {
+              toast({ variant: "destructive", title: "Erro", description: result.error });
+          }
+      });
+  }
 
   const onOfferCreated = (newOffer: Offer) => {
-    setOffers(prev => [newOffer, ...prev]);
-  };
-  
+      setOffers(prev => [newOffer, ...prev]);
+      toast({ title: "Oferta enviada para aprovação!" });
+  }
+
   const onOfferLiked = (offerId: string, newLikedBy: string[]) => {
       setOffers(prev => prev.map(o => o.id === offerId ? { ...o, likedBy: newLikedBy } : o));
-  };
+  }
+  
+  const handleToggleReminder = (reminderId: string, isCompleted: boolean) => {
+      const reminderToUpdate = reminders.find(r => r.id === reminderId);
+      if(!reminderToUpdate || !user) return;
+      
+      startTransition(async () => {
+          const result = await updateReminderStatus(reminderToUpdate.clientId, reminderId, isCompleted, user.uid);
+          if (result.success && result.client) {
+              toast({ title: "Lembrete atualizado!" });
+              handleClientUpdated(result.client);
+              // Optimistically update reminders list
+              setReminders(prev => prev.map(r => r.id === reminderId ? {...r, isCompleted} : r));
+          } else {
+              toast({ variant: "destructive", title: "Erro", description: result.error });
+          }
+      });
+  }
+  
+  const handleOpenProposalDialog = (client: Client) => {
+      setIsDetailSheetOpen(false); // Close details
+      setTimeout(() => setClientForProposal(client), 150); // Open new dialog after a short delay
+  }
 
-  const fifteenDaysAgo = subDays(new Date(), 15);
+  const handleClaimLead = (lead: Client) => {
+      if (!user?.uid || !userProfile?.name) return;
+      startClaimingTransition(async () => {
+          const result = await claimLead(lead.id, user.uid, userProfile.name);
+          if (result.success && result.client) {
+              setUnclaimedLeads(prev => prev.filter(l => l.id !== lead.id));
+              setClients(prev => [result.client, ...prev]);
+              toast({ title: "Lead pego com sucesso!" });
+          } else {
+              toast({ variant: "destructive", title: "Erro ao pegar lead", description: result.error });
+          }
+      });
+  }
 
+  const handleClaimCampaignLead = (lead: CampaignLead) => {
+        if (!user || !userProfile) return;
+
+        const campaign = campaigns.find(c => c.id === lead.campaignId);
+        if (!campaign) {
+            toast({ variant: "destructive", title: "Erro", description: "Campanha não encontrada." });
+            return;
+        }
+
+        startClaimingTransition(async () => {
+            const remarketingText = campaign.script ? campaign.script.replace(/<cliente>/g, lead.name) : '';
+            const result = await addClient({
+                name: lead.name,
+                city: lead.city || 'Não informado',
+                contact: lead.contact || 'Não informado',
+                desiredProduct: "Outros", // Or get from campaign if available
+                lastProductBought: '',
+                status: "Novo Lead",
+                remarketingReminder: remarketingText,
+                tagIds: campaign.defaultTagId ? [campaign.defaultTagId] : [],
+                campaignId: campaign.id,
+                campaignLeadId: lead.id,
+            }, user.uid);
+
+            if (result.success) {
+                toast({ title: "Lead pego com sucesso!" });
+                fetchAllData();
+                fetchCampaignsAndLeads();
+            } else {
+                toast({ variant: "destructive", title: "Erro ao pegar lead", description: result.error?.formErrors?.join(', ') || result.error?.fieldErrors?.contact?.[0] || 'Ocorreu um erro.' });
+            }
+        });
+    }
 
   return (
     <div className="flex-1 flex flex-col w-full">
@@ -1015,12 +1012,22 @@ export function ClientsView() {
                                 {campaigns.map(campaign => (
                                     <AccordionItem value={campaign.id} key={campaign.id}>
                                         <AccordionTrigger>
-                                            {campaign.name}
+                                            <div className='flex justify-between items-center w-full'>
+                                                <span>{campaign.name}</span>
+                                                <Badge variant="secondary">
+                                                    {(availableCampaignLeads[campaign.id] || []).length} leads disponíveis
+                                                </Badge>
+                                            </div>
                                         </AccordionTrigger>
                                         <AccordionContent>
                                             <div className="space-y-4">
                                                 <p className="text-sm text-muted-foreground">{campaign.description}</p>
-                                                <CampaignLeadsTable campaign={campaign} onLeadClaimed={() => { fetchAllData(); fetchGroupLeads(); }} />
+                                                <CampaignLeadsTable
+                                                    campaign={campaign}
+                                                    leads={availableCampaignLeads[campaign.id] || []}
+                                                    isLoading={isLoadingCampaignLeads}
+                                                    onLeadClaimed={handleClaimCampaignLead}
+                                                />
                                             </div>
                                         </AccordionContent>
                                     </AccordionItem>
